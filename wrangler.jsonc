@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "agent-kol",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-25",
+  "workers_dev": true,
+  "vars": {
+    "REVIEW_PRICE": "5",
+    "PAY_TO": "p_umBqZvkim8"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "agent-kol",
+      "database_id": "6789f92e-e3d5-4906-a756-6edc31b21eed",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
