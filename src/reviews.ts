@@ -3,21 +3,21 @@ import { hash, HttpError, onlyKeys, page, text } from './http';
 import type { Env } from './types';
 interface Review {review_id:string;booking_id:string;verdict:string;tested_at:string;what_we_called:string;result_summary:string;latency_ms:number|null;pros:string;cons:string;how_to_buy:string;content_hash:string;created_at:string;}
 function publicReview(row:Review) {
-  const {content_hash,...rest}=row;
-  return {...rest,pros:JSON.parse(row.pros),cons:JSON.parse(row.cons)};
+  const {review_id,booking_id,verdict,tested_at,what_we_called,result_summary,latency_ms,how_to_buy,created_at}=row;
+  return {review_id,booking_id,verdict,tested_at,what_we_called,result_summary,latency_ms,how_to_buy,created_at,pros:JSON.parse(row.pros),cons:JSON.parse(row.cons)};
 }
 function list(value:unknown,field:string) {
   if(!Array.isArray(value)||value.length>10) throw new HttpError(400,'invalid_input',field+' must be an array of up to 10 strings.');
   return value.map(item=>text(item,field,500));
 }
 export async function getReview(env:Env,id:string) {
-  const row=await env.DB.prepare('SELECT * FROM reviews WHERE review_id=?').bind(id).first<Review>();
+  const row=await env.DB.prepare('SELECT review_id,booking_id,verdict,tested_at,what_we_called,result_summary,latency_ms,pros,cons,how_to_buy,created_at FROM reviews WHERE review_id=?').bind(id).first<Review>();
   if(!row)throw new HttpError(404,'not_found','Review not found.');
   return publicReview(row);
 }
 export async function listReviews(env:Env,url:URL) {
   const {limit,offset}=page(url);
-  const {results}=await env.DB.prepare('SELECT * FROM reviews ORDER BY created_at DESC,review_id DESC LIMIT ? OFFSET ?').bind(limit+1,offset).all<Review>();
+  const {results}=await env.DB.prepare('SELECT review_id,booking_id,verdict,tested_at,what_we_called,result_summary,latency_ms,pros,cons,how_to_buy,created_at FROM reviews ORDER BY created_at DESC,review_id DESC LIMIT ? OFFSET ?').bind(limit+1,offset).all<Review>();
   return {items:results.slice(0,limit).map(publicReview),next_offset:results.length>limit?offset+limit:null};
 }
 export async function publishReview(env:Env,input:Record<string,unknown>) {

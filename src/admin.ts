@@ -23,6 +23,7 @@ function timestamp(value: unknown, field: string) {
 }
 export async function adminBookings(env: Env,url: URL) {
   const {limit,offset}=page(url), status=url.searchParams.get('status');
+  if(status!==null&&!['pending_payment','awaiting_payment','payment_ambiguous','paid','testing','published','failed','refunded','cancelled'].includes(status))throw new HttpError(400,'invalid_input','Invalid status filter.');
   const statement=status
     ? env.DB.prepare('SELECT * FROM bookings WHERE status=? ORDER BY queue_at,booking_id LIMIT ? OFFSET ?').bind(status,limit+1,offset)
     : env.DB.prepare('SELECT * FROM bookings ORDER BY queue_at,booking_id LIMIT ? OFFSET ?').bind(limit+1,offset);
@@ -83,11 +84,11 @@ export async function changeStatus(env:Env,id:string,input:Record<string,unknown
       }
       if(received-baseline!==row.price) throw new HttpError(409,'payment_ambiguous','Received delta does not match price; mark payment_ambiguous explicitly.');
       evidence={method,baseline,received,observed_at:observedAt,verification:'heuristic_not_transaction_verified'};
-    } else if((method==='transaction_reference'||method==='ledger_verified')) {
+    } else if((method==='transaction_reference'||method==='ledger_attested')) {
       onlyKeys(supplied,['method','transaction_id','amount','payer','payee','memo','observed_at']);
       paymentReference=text(supplied.transaction_id,'transaction_id',200); transactionReference=paymentReference;
       if(integer(supplied.amount,'amount')!==row.price || supplied.payer!==row.seller_payee_id || supplied.payee!==row.pay_to || supplied.memo!==row.booking_id) {
-        throw new HttpError(409,'payment_mismatch','Amount, payee and memo must match this booking.');
+        throw new HttpError(409,'payment_mismatch','Amount, payer, payee and memo must match this booking.');
       }
       evidence={...supplied,observed_at:timestamp(supplied.observed_at,'observed_at'),verification:'agent_attested_transaction'};
       // This API records the trusted operator's attestation; it does not query SharedNet.

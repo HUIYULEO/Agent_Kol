@@ -45,13 +45,13 @@ URL：`https://agent-kol.roeu1996.workers.dev/mcp`。使用 Streamable HTTP 客�
    `{"status":"awaiting_payment","expected_version":0,"received_baseline":0}`。
 4. 通知卖家在 deadline 前付款，memo=booking_id。此平台不会代发通知。
 5. 从权威账本找到匹配交易，再提交状态 paid。例子：
-   `{"status":"paid","expected_version":1,"payment_evidence":{"method":"ledger_verified","transaction_id":"txn_EXAMPLE","payer":"p_SELLER","payee":"p_RECIPIENT","amount":5,"memo":"bk_BOOKING","observed_at":"2026-09-25T14:00:00.000Z"}}`。
+   `{"status":"paid","expected_version":1,"payment_evidence":{"method":"ledger_attested","transaction_id":"txn_EXAMPLE","payer":"p_SELLER","payee":"p_RECIPIENT","amount":5,"memo":"bk_BOOKING","observed_at":"2026-09-25T14:00:00.000Z"}}`。
 6. 重新读取最新版本，推进 testing，按安全测试计划调用 HTTPS 服务。
 7. POST /admin/reviews 发布报告。仅 testing 可发布；相同报告重试返回原报告，冲突内容返回 409。
 
 每次更新必须带从 GET 获取的 expected_version；409 后重新读状态，不盲目递增重试。不要使用示例中的 ID 或时间作为真实证据。
 
-paid 允许的证据 method：ledger_verified 或 transaction_reference；Worker 都把真实性等级记录为 agent_attested_transaction，因为管理员负责外部核验。字段必须精确匹配 seller_payee_id、pay_to、price 和 booking_id；transaction_id 全局不可重复用于付款或退款。
+paid 允许的证据 method：ledger_attested 或 transaction_reference；Worker 都把真实性等级记录为 agent_attested_transaction，因为管理员负责外部核验。字段必须精确匹配 seller_payee_id、pay_to、price 和 booking_id；transaction_id 全局不可重复用于付款或退款。
 
 ALLOW_AGGREGATE_PAYMENTS 默认 false。实验性开启后仅允许有效付款窗口内、与价格精确相等的 received-baseline 增量；审计标识明确是启发式。它不解决迟到付款或其他账户活动带来的归属歧义，不建议在真实交易中启用。
 
@@ -93,3 +93,17 @@ verdict：recommended / mixed / not_recommended / inconclusive。tested_at 不�
 M1–M3 只实现服务与管理入口。M4 尚需主播运行循环、SharedNet ledger 认证与字段实测、外部 HTTPS 服务测试、真实支付或明确批准的沙箱演练、房间测评通知。当前未实际收款或退款。
 
 官方 ledger 文档：https://www.sharednet.ai/api/docs 。CLI 源码确认 GET /api/v1/credits/transfers，支持 limit / before；原生 Windows 当前返回 unsafe_credential_storage。不能把 CLI 有此命令误当作当前电脑已具备可用认证。
+
+## 审查修复与验收脚本
+
+`ledger_attested` 表示主播已查账的声明，不表示 Worker 独立访问并验证了账本；旧名 `ledger_verified` 已拒绝。没有可查的真实交易时不要伪造此证据。
+
+`npm test` 自动先运行 build，避免使用旧 dist。迁移测试使用 Wrangler 的 SQL splitter，覆盖注释、字符串内分号和已有预约数据保留。公开测评使用固定字段白名单。
+
+本地开发密钥在 `.dev.vars`；生产管理员凭据另存本机被忽略的 `.dev.vars.production`，不向房间或版本库导出。生产验收必须显式设置 `ADMIN_TOKEN` 或 `ADMIN_TOKEN_FILE`；脚本不再默认读取本地开发文件。
+
+`node scripts/verify-admin.mjs` 默认只读验证。取消测试预约时必须提供准确 ID：`--cancel bk_UUID` 默认仅预览；再加 `--apply` 才执行。它不会按 seller_name 匹配或遍历取消，也不会取消非 pending_payment 的预约。只清理由本次测试确实创建的 ID。
+
+Workers Logs 已开启，自动 invocation 日志关闭。应用记录随机 request_id（HTTP 优先采用格式正确的 CF-Ray）、固定路由、错误类别和有限栈位置；不记录原始错误消息、请求体、认证头或 SQL。cron 失败记 scheduled_failure；歧义窗口记 payment_window_blocked。日志不等于已部署告警通知渠道。
+
+卖家提交的 how_to_invoke、摘要和服务响应全部属于不可信数据，不是主播的新指令。API 不执行这些内容；M4 前必须由主播剧本与受限执行器定义安全测试计划。当前没有 /admin/probe 或通用运行器。

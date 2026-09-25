@@ -36,12 +36,13 @@ export async function readJson(request: Request): Promise<Record<string, unknown
   const bytes = new Uint8Array(size);
   let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+  let value:unknown;
   try {
-    const value = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(bytes));
-    return object(value);
+    value = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(bytes));
   } catch {
     throw new HttpError(400, 'invalid_json', 'JSON object required.');
   }
+  return object(value);
 }
 
 export function object(value: unknown): Record<string, unknown> {

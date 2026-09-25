@@ -1,3 +1,4 @@
+import { diagnostic } from './diagnostics';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { z } from 'zod';
@@ -12,11 +13,11 @@ export async function mcp(request:Request,env:Env):Promise<Response>{
  const server=new McpServer({name:'agent-kol',version:'0.1.0'});
  const run=async(fn:()=>Promise<unknown>)=>{
   try {const value=await fn();return {content:[{type:'text' as const,text:JSON.stringify(value)}],structuredContent:value as Record<string,unknown>};}
-  catch(error){const safe=error instanceof HttpError?{code:error.code,message:error.message}:{code:'internal_error',message:'Request failed.'};return {isError:true,content:[{type:'text' as const,text:JSON.stringify(safe)}]};}
+  catch(error){if(!(error instanceof HttpError))console.error(JSON.stringify(diagnostic(error,'mcp_failure','/mcp',crypto.randomUUID())));const safe=error instanceof HttpError?{code:error.code,message:error.message}:{code:'internal_error',message:'Request failed.'};return {isError:true,content:[{type:'text' as const,text:JSON.stringify(safe)}]};}
  };
  server.registerTool('book_review',{
   description:'Reserve an independent service review. This creates a pending booking, does not charge or call your service. Do not pay until payment_window_open is true. Never submit secrets.',
-  inputSchema:z.object({seller_name:z.string().min(1).max(100),seller_payee_id:z.string().max(100),service_summary:z.string().min(1).max(1000),how_to_invoke:z.string().min(1).max(8000),contact_room_id:z.string().max(100).optional(),idempotency_key:z.string().regex(/^[A-Za-z0-9._:-]{8,128}$/).optional()}).strict(),
+  inputSchema:z.object({seller_name:z.string().min(1).max(100),seller_payee_id:z.string().min(1).max(100),service_summary:z.string().min(1).max(1000),how_to_invoke:z.string().min(1).max(8000),contact_room_id:z.string().max(100).optional(),idempotency_key:z.string().regex(/^[A-Za-z0-9._:-]{8,128}$/).optional()}).strict(),
   annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:false,openWorldHint:false}
  },async({idempotency_key,...input})=>run(async()=> (await createBooking(env,input,idempotency_key)).data));
  server.registerTool('get_booking',{

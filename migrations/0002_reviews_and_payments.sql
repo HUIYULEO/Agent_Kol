@@ -17,6 +17,7 @@ SELECT booking_id,seller_name,seller_payee_id,service_summary,how_to_invoke,cont
 price,pay_to,status,idempotency_key,request_hash,created_at,updated_at,created_at FROM bookings_v1;
 DROP TABLE bookings_v1;
 CREATE INDEX bookings_queue ON bookings(status,queue_at,booking_id);
+-- Every active or ambiguous row maps to the same key (1), allowing only one globally.
 CREATE UNIQUE INDEX one_payment_window ON bookings((1)) WHERE status IN ('awaiting_payment','payment_ambiguous');
 CREATE TABLE booking_events (
  event_id TEXT PRIMARY KEY, booking_id TEXT NOT NULL REFERENCES bookings(booking_id),

@@ -1,3 +1,4 @@
+import {unstable_splitSqlQuery} from 'wrangler';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
@@ -9,7 +10,8 @@ before(async () => {
     d1Databases: ['DB'], bindings: { REVIEW_PRICE: '5', PAY_TO: 'p_test_recipient', ADMIN_TOKEN: 'test-only-admin-token-32-characters' } }] }));
   db = await mf.getD1Database('DB');
   for (const file of (await readdir('migrations')).filter(f => f.endsWith('.sql')).sort()) {
-    await db.exec((await readFile('migrations/' + file, 'utf8')).replace(/\n/g, ' '));
+    const statements=unstable_splitSqlQuery(await readFile('migrations/'+file,'utf8'));
+    await db.batch(statements.map(sql=>db.prepare(sql)));
   }
 });
 after(async () => { await mf?.dispose(); });
@@ -161,4 +163,29 @@ test('scheduled handler expires windows without releasing ambiguous holds',async
  await worker.scheduled({cron:'* * * * *',scheduledTime:Date.now()});
  assert.equal((await detail(id)).status,'payment_ambiguous');
  await transition(id,'cancelled',{reason:'test reconciled'});
+});
+
+test('public reviews never expose newly added internal columns',async()=>{
+ await db.exec("ALTER TABLE reviews ADD COLUMN internal_note TEXT DEFAULT 'PRIVATE';");
+ const result=await (await request('/reviews')).json();
+ assert.ok(result.items.length>0);
+ const fields=['review_id','booking_id','verdict','tested_at','what_we_called','result_summary','latency_ms','pros','cons','how_to_buy','created_at'].sort();
+ assert.deepEqual(Object.keys(result.items[0]).sort(),fields);
+ const one=await (await request('/reviews/'+result.items[0].review_id)).json();
+ assert.deepEqual(Object.keys(one).sort(),fields);
+});
+test('validation errors distinguish JSON syntax, shape and status; HEAD health works',async()=>{
+ const array=await post('/bookings',[]);assert.equal(array.status,400);assert.equal((await array.json()).error.code,'invalid_input');
+ const malformed=await request('/bookings',{method:'POST',headers:{'Content-Type':'application/json'},body:'{'});
+ assert.equal((await malformed.json()).error.code,'invalid_json');
+ assert.equal((await request('/admin/bookings?status=bogus',{headers:auth})).status,400);
+ const head=await request('/health',{method:'HEAD'});assert.equal(head.status,200);assert.equal(await head.text(),'');
+});
+test('ledger evidence is named as attestation rather than independent verification',async()=>{
+ const id=await fresh();await transition(id,'awaiting_payment',{received_baseline:0});
+ const e=evidence(id);
+ assert.equal((await transition(id,'paid',{payment_evidence:{...e,method:'ledger_verified'}})).status,400);
+ assert.equal((await transition(id,'paid',{payment_evidence:{...e,method:'ledger_attested'}})).status,200);
+ const stored=JSON.parse((await detail(id)).payment_evidence);
+ assert.equal(stored.method,'ledger_attested');assert.equal(stored.verification,'agent_attested_transaction');
 });

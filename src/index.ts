@@ -1,3 +1,4 @@
+import { diagnostic, routeLabel } from './diagnostics';
 import { expireWindows } from './scheduled';
 import { mcp } from './mcp';
 import { landing, styles, appScript } from './landing';
@@ -12,7 +13,7 @@ async function route(request:Request,env:Env):Promise<Response> {
  if(method==='GET'&&path==='/')return new Response(landing(url.origin,env),{headers:{'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",'Cache-Control':'no-cache'}});
  if(method==='GET'&&path==='/styles.css')return new Response(styles,{headers:{'Content-Type':'text/css; charset=utf-8','Cache-Control':'public, max-age=300'}});
  if(method==='GET'&&path==='/app.js')return new Response(appScript,{headers:{'Content-Type':'text/javascript; charset=utf-8','Cache-Control':'public, max-age=300'}});
- if(method==='GET'&&path==='/health')return json({ok:true});
+ if((method==='GET'||method==='HEAD')&&path==='/health')return method==='HEAD'?new Response(null,{headers:{'Cache-Control':'no-store'}}):json({ok:true});
  if(method==='POST'&&path==='/bookings'){
   const result=await createBooking(env,await readJson(request),request.headers.get('Idempotency-Key'));
   return json(result.data,result.created?201:200,{Location:'/bookings/'+result.data.booking_id});
@@ -41,8 +42,10 @@ export default { scheduled(_event:ScheduledController,env:Env,ctx:ExecutionConte
   try{return secure(await route(request,env));}
   catch(error){
    if(error instanceof HttpError)return secure(json({error:{code:error.code,message:error.message}},error.status));
-   console.error('Unhandled request failure');
-   return secure(json({error:{code:'internal_error',message:'Request failed.'}},500));
+   const ray=request.headers.get('cf-ray');
+   const requestId=ray && /^[a-f0-9]{16}-[A-Z]{3}$/i.test(ray)?ray:crypto.randomUUID();
+   console.error(JSON.stringify(diagnostic(error,'request_failure',routeLabel(new URL(request.url).pathname),requestId)));
+   return secure(json({error:{code:'internal_error',message:'Request failed.',request_id:requestId}},500));
   }
  }
 };
