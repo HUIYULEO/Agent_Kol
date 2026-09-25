@@ -52,7 +52,7 @@ const auth={Authorization:'Bearer test-only-admin-token-32-characters'};
 const detail=async id=>(await (await request('/admin/bookings/'+id,{headers:auth})).json()).booking;
 const transition=async(id,status,extra={})=>post('/admin/bookings/'+id+'/status',{status,expected_version:(await detail(id)).version,...extra},auth);
 const fresh=async()=>(await (await post('/bookings',body)).json()).booking_id;
-const evidence=id=>({method:'transaction_reference',transaction_id:'txn_'+crypto.randomUUID(),amount:5,payee:'p_test_recipient',memo:id,observed_at:new Date().toISOString()});
+const evidence=id=>({method:'transaction_reference',transaction_id:'txn_'+crypto.randomUUID(),amount:5,payer:'p_test',payee:'p_test_recipient',memo:id,observed_at:new Date().toISOString()});
 test('admin authentication and status transitions fail closed',async()=>{
  assert.equal((await request('/admin/bookings')).status,401);
  assert.equal((await request('/admin/bookings',{headers:{Authorization:'Bearer wrong'}})).status,401);
@@ -102,4 +102,63 @@ test('payment evidence match and replay protection; review publication is atomic
  assert.equal((await transition(second,'cancelled',{reason:'test cleanup'})).status,200);
  const events=(await (await request('/admin/bookings/'+id,{headers:auth})).json()).events;
  assert.deepEqual(events.map(e=>e.to_status),['awaiting_payment','paid','testing','published']);
+});
+
+test('refund references cannot be reused, and original payment evidence is retained',async()=>{
+ const id=await fresh(); await transition(id,'awaiting_payment',{received_baseline:0});
+ const paid=evidence(id); assert.equal((await transition(id,'paid',{payment_evidence:paid})).status,200);
+ const refund={transaction_id:'refund_'+crypto.randomUUID(),amount:5,payer:'p_test_recipient',payee:'p_test',observed_at:new Date().toISOString()};
+ assert.equal((await transition(id,'refunded',{payment_evidence:{...refund,transaction_id:paid.transaction_id}})).status,409);
+ assert.equal((await transition(id,'refunded',{payment_evidence:refund})).status,200);
+ const row=await detail(id);assert.equal(row.payment_reference,paid.transaction_id);assert.equal(row.refund_reference,refund.transaction_id);
+ assert.equal(JSON.parse(row.refund_evidence).transaction_id,refund.transaction_id);
+ const second=await fresh();await transition(second,'awaiting_payment',{received_baseline:5});await transition(second,'paid',{payment_evidence:evidence(second)});
+ assert.equal((await transition(second,'refunded',{payment_evidence:refund})).status,409);
+ assert.equal((await detail(second)).status,'paid');
+});
+test('rejects reviews timestamped before booking',async()=>{
+ const id=await fresh();await transition(id,'awaiting_payment',{received_baseline:10});await transition(id,'paid',{payment_evidence:evidence(id)});await transition(id,'testing');
+ const r=await post('/admin/reviews',{booking_id:id,verdict:'mixed',tested_at:'1970-01-01T00:00:00Z',what_we_called:'test',result_summary:'test',pros:[],cons:[],how_to_buy:'test'},auth);
+ assert.equal(r.status,400);assert.equal((await detail(id)).status,'testing');
+});
+test('MCP official SDK client initializes, discovers tools and calls public APIs',async()=>{
+ const {Client}=await import('@modelcontextprotocol/sdk/client/index.js');
+ const {StreamableHTTPClientTransport}=await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+ const client=new Client({name:'integration-test',version:'1'});
+ const transport=new StreamableHTTPClientTransport(new URL('https://test.local/mcp'),{fetch:async(url,init)=>request('/mcp',init)});
+ try{
+  await client.connect(transport);
+  const {tools}=await client.listTools();
+  assert.deepEqual(tools.map(t=>t.name).sort(),['book_review','get_booking','get_review','list_reviews'].sort());
+  const booking=await client.callTool({name:'book_review',arguments:{...body,idempotency_key:'mcp-'+crypto.randomUUID()}});
+  assert.ok(!booking.isError);const id=JSON.parse(booking.content[0].text).booking_id;
+  const found=await client.callTool({name:'get_booking',arguments:{booking_id:id}});
+  assert.equal(JSON.parse(found.content[0].text).status,'pending_payment');
+  assert.equal(JSON.parse(found.content[0].text).how_to_invoke,undefined);
+  const reviews=await client.callTool({name:'list_reviews',arguments:{}});
+  assert.ok(!reviews.isError);
+  const invalid=await client.callTool({name:'book_review',arguments:{...body,status:'paid'}});
+  assert.equal(invalid.isError,true);
+ }finally{await client.close();}
+ assert.equal((await request('/mcp',{method:'POST',headers:{Origin:'https://evil.example','Content-Type':'application/json'},body:'{}'})).status,403);
+ assert.equal((await request('/mcp')).status,405);
+});
+test('landing page serves same-origin assets and a safe working curl example',async()=>{
+ const r=await request('/');assert.equal(r.status,200);
+ assert.match(r.headers.get('Content-Security-Policy'),/script-src 'self'/);
+ const html=await r.text();assert.match(html,/id="curl"/);assert.match(html,/https:\/\/test.local\/bookings/);
+ assert.equal((await request('/styles.css')).status,200);assert.equal((await request('/app.js')).status,200);
+});
+
+test('scheduled handler expires windows without releasing ambiguous holds',async()=>{
+ const id=await fresh();await transition(id,'awaiting_payment',{received_baseline:0});
+ await db.prepare('UPDATE bookings SET payment_deadline=? WHERE booking_id=?').bind('2020-01-01T00:00:00.000Z',id).run();
+ const worker=await mf.getWorker();
+ await worker.scheduled({cron:'* * * * *',scheduledTime:Date.now()});
+ assert.equal((await detail(id)).status,'pending_payment');
+ await transition(id,'awaiting_payment',{received_baseline:0});await transition(id,'payment_ambiguous',{reason:'unattributed funds'});
+ await db.prepare('UPDATE bookings SET payment_deadline=? WHERE booking_id=?').bind('2020-01-01T00:00:00.000Z',id).run();
+ await worker.scheduled({cron:'* * * * *',scheduledTime:Date.now()});
+ assert.equal((await detail(id)).status,'payment_ambiguous');
+ await transition(id,'cancelled',{reason:'test reconciled'});
 });

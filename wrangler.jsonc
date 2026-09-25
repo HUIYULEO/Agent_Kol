@@ -3,9 +3,9 @@
   "name": "agent-kol",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-25",
-  "workers_dev": true,
+  "workers_dev": true, "triggers": { "crons": ["* * * * *"] },
   "vars": {
-    "REVIEW_PRICE": "5",
+    "REVIEW_PRICE": "5", "PAYMENT_WINDOW_SECONDS": "180", "ALLOW_AGGREGATE_PAYMENTS": "false",
     "PAY_TO": "p_umBqZvkim8"
   },
   "d1_databases": [

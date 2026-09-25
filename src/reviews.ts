@@ -43,6 +43,7 @@ export async function publishReview(env:Env,input:Record<string,unknown>) {
     return {data:publicReview(existing),created:false};
   }
   const booking=await getBooking(env,data.booking_id);
+  if(Date.parse(data.tested_at)<Date.parse(booking.created_at))throw new HttpError(400,'invalid_input','tested_at cannot precede the booking.');
   if(booking.status!=='testing')throw new HttpError(409,'invalid_transition','Only a testing booking can publish a review.');
   const id='rev_'+crypto.randomUUID(), eventId='evt_'+crypto.randomUUID(), now=new Date().toISOString();
   await env.DB.batch([

@@ -1,3 +1,6 @@
+import { expireWindows } from './scheduled';
+import { mcp } from './mcp';
+import { landing, styles, appScript } from './landing';
 import { createBooking, getBooking, publicBooking, queue } from './bookings';
 import { authenticate, adminBooking, adminBookings, changeStatus } from './admin';
 import { getReview, listReviews, publishReview } from './reviews';
@@ -5,6 +8,10 @@ import { HttpError, json, readJson, secure } from './http';
 import type { Env } from './types';
 async function route(request:Request,env:Env):Promise<Response> {
  const url=new URL(request.url), path=url.pathname, method=request.method;
+ if(path==='/mcp')return mcp(request,env);
+ if(method==='GET'&&path==='/')return new Response(landing(url.origin,env),{headers:{'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",'Cache-Control':'no-cache'}});
+ if(method==='GET'&&path==='/styles.css')return new Response(styles,{headers:{'Content-Type':'text/css; charset=utf-8','Cache-Control':'public, max-age=300'}});
+ if(method==='GET'&&path==='/app.js')return new Response(appScript,{headers:{'Content-Type':'text/javascript; charset=utf-8','Cache-Control':'public, max-age=300'}});
  if(method==='GET'&&path==='/health')return json({ok:true});
  if(method==='POST'&&path==='/bookings'){
   const result=await createBooking(env,await readJson(request),request.headers.get('Idempotency-Key'));
@@ -29,7 +36,7 @@ async function route(request:Request,env:Env):Promise<Response> {
  }
  throw new HttpError(404,'not_found','Route not found.');
 }
-export default {
+export default { scheduled(_event:ScheduledController,env:Env,ctx:ExecutionContext){ctx.waitUntil(expireWindows(env));},
  async fetch(request:Request,env:Env):Promise<Response>{
   try{return secure(await route(request,env));}
   catch(error){

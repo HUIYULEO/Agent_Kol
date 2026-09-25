@@ -43,7 +43,7 @@ export async function changeStatus(env:Env,id:string,input:Record<string,unknown
   const now=new Date().toISOString();
   let baseline=row.received_baseline, opened=row.payment_opened_at, deadline=row.payment_deadline;
   let evidence:Record<string,unknown>={reason:input.reason==null?null:text(input.reason,'reason',2000)};
-  let paymentReference=row.payment_reference;
+  let paymentReference=row.payment_reference; let refundReference=row.refund_reference; let transactionReference:string|null=null;
   let queueAt=row.queue_at;
   const allowed:Partial<Record<Status,Status[]>>={
     pending_payment:['awaiting_payment','cancelled'],
@@ -83,10 +83,10 @@ export async function changeStatus(env:Env,id:string,input:Record<string,unknown
       }
       if(received-baseline!==row.price) throw new HttpError(409,'payment_ambiguous','Received delta does not match price; mark payment_ambiguous explicitly.');
       evidence={method,baseline,received,observed_at:observedAt,verification:'heuristic_not_transaction_verified'};
-    } else if(method==='transaction_reference') {
-      onlyKeys(supplied,['method','transaction_id','amount','payee','memo','observed_at']);
-      paymentReference=text(supplied.transaction_id,'transaction_id',200);
-      if(integer(supplied.amount,'amount')!==row.price || supplied.payee!==row.pay_to || supplied.memo!==row.booking_id) {
+    } else if((method==='transaction_reference'||method==='ledger_verified')) {
+      onlyKeys(supplied,['method','transaction_id','amount','payer','payee','memo','observed_at']);
+      paymentReference=text(supplied.transaction_id,'transaction_id',200); transactionReference=paymentReference;
+      if(integer(supplied.amount,'amount')!==row.price || supplied.payer!==row.seller_payee_id || supplied.payee!==row.pay_to || supplied.memo!==row.booking_id) {
         throw new HttpError(409,'payment_mismatch','Amount, payee and memo must match this booking.');
       }
       evidence={...supplied,observed_at:timestamp(supplied.observed_at,'observed_at'),verification:'agent_attested_transaction'};
@@ -95,19 +95,20 @@ export async function changeStatus(env:Env,id:string,input:Record<string,unknown
   }
   if(target==='refunded') {
     const supplied=object(input.payment_evidence);
-    const reference=text(supplied.transaction_id,'transaction_id',200);
-    if(integer(supplied.amount,'amount')!==row.price||supplied.payee!==row.seller_payee_id) throw new HttpError(409,'refund_mismatch','Refund must match seller and price.');
-    evidence={...supplied,transaction_id:reference,kind:'agent_attested_refund'};
+    onlyKeys(supplied,['transaction_id','amount','payer','payee','observed_at']); const reference=text(supplied.transaction_id,'transaction_id',200); refundReference=reference; transactionReference=reference;
+    if(integer(supplied.amount,'amount')!==row.price||supplied.payer!==row.pay_to||supplied.payee!==row.seller_payee_id) throw new HttpError(409,'refund_mismatch','Refund must match seller and price.');
+    evidence={...supplied,transaction_id:reference,observed_at:timestamp(supplied.observed_at,'observed_at'),kind:'agent_attested_refund'};
   }
   const eventId='evt_'+crypto.randomUUID();
   try {
     await env.DB.batch([
-      env.DB.prepare(`UPDATE bookings SET status=?,version=version+1,updated_at=?,queue_at=?,received_baseline=?,payment_opened_at=?,payment_deadline=?,payment_evidence=?,payment_reference=?,last_event_id=?
+      env.DB.prepare(`UPDATE bookings SET status=?,version=version+1,updated_at=?,queue_at=?,received_baseline=?,payment_opened_at=?,payment_deadline=?,payment_evidence=?,payment_reference=?,refund_evidence=?,refund_reference=?,last_event_id=?
         WHERE booking_id=? AND version=?`).bind(target,now,queueAt,baseline,opened,deadline,
-          target==='paid'?JSON.stringify(evidence):row.payment_evidence,paymentReference,eventId,id,version),
+          target==='paid'?JSON.stringify(evidence):row.payment_evidence,paymentReference,target==='refunded'?JSON.stringify(evidence):row.refund_evidence,refundReference,eventId,id,version),
       env.DB.prepare(`INSERT INTO booking_events(event_id,booking_id,from_status,to_status,evidence,created_at)
         SELECT ?,?,?,?,?,? FROM bookings WHERE booking_id=? AND last_event_id=?`)
-        .bind(eventId,id,row.status,target,JSON.stringify(evidence),now,id,eventId)
+        .bind(eventId,id,row.status,target,JSON.stringify(evidence),now,id,eventId),
+      env.DB.prepare('INSERT INTO transaction_references(transaction_id,booking_id,kind,created_at) SELECT ?,?,?,? FROM bookings WHERE booking_id=? AND last_event_id=? AND ? IS NOT NULL').bind(transactionReference,id,target==='refunded'?'refund':'payment',now,id,eventId,transactionReference)
     ]);
   } catch(error) {
     if(String(error).includes('UNIQUE constraint')) throw new HttpError(409,'state_conflict','Payment window or transaction reference is already used.');
