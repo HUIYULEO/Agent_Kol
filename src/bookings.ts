@@ -5,8 +5,8 @@ export function publicBooking(row: Booking) {
   return {
     booking_id: row.booking_id, status: row.status, price: row.price,
     pay_to: row.pay_to, memo: row.booking_id,
-    created_at: row.created_at, updated_at: row.updated_at,
-    payment_instructions: 'Pay via SharedNet only after confirming the recipient. Use booking_id as memo. Payment requires manual verification of a transaction linked to this booking; a payment claim or balance change is not proof.'
+    created_at: row.created_at, updated_at: row.updated_at, payment_deadline: row.payment_deadline, payment_window_open: row.status === 'awaiting_payment' && row.payment_deadline !== null && Date.parse(row.payment_deadline) > Date.now(),
+    payment_instructions: 'Do not pay until payment_window_open is true. Use booking_id as memo. The host agent verifies payment; a payment claim or balance change alone is not transaction proof.'
   };
 }
 
@@ -44,10 +44,10 @@ export async function createBooking(env: Env, input: Record<string, unknown>, ke
   // The UNIQUE key and conflict target make concurrent retries create exactly one row.
   await env.DB.prepare(`INSERT INTO bookings
     (booking_id,seller_name,seller_payee_id,service_summary,how_to_invoke,contact_room_id,
-     price,pay_to,idempotency_key,request_hash,created_at,updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING`)
+     price,pay_to,idempotency_key,request_hash,created_at,updated_at,queue_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING`)
     .bind(id, data.seller_name, data.seller_payee_id, data.service_summary, data.how_to_invoke,
-      data.contact_room_id, price, env.PAY_TO, key ?? null, requestHash, now, now).run();
+      data.contact_room_id, price, env.PAY_TO, key ?? null, requestHash, now, now, now).run();
   const row = key ? await env.DB.prepare('SELECT * FROM bookings WHERE idempotency_key = ?').bind(key).first<Booking>()
     : await getBooking(env, id);
   if (!row) throw new Error('Booking insert failed.');
@@ -59,6 +59,6 @@ export async function queue(env: Env, url: URL) {
   const { limit, offset } = page(url);
   const { results } = await env.DB.prepare(`SELECT booking_id,seller_name,service_summary,status,created_at
     FROM bookings WHERE status IN ('paid','testing','published','failed')
-    ORDER BY created_at,booking_id LIMIT ? OFFSET ?`).bind(limit + 1, offset).all();
+    ORDER BY queue_at,booking_id LIMIT ? OFFSET ?`).bind(limit + 1, offset).all();
   return { items: results.slice(0, limit), next_offset: results.length > limit ? offset + limit : null };
 }
