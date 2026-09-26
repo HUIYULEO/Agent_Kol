@@ -6,12 +6,14 @@ import {pathToFileURL} from 'node:url';
 export function matchFixture(booking,rows){
  const result=(match,extra={})=>({simulation_only:true,match,...extra});
  if(!booking||!/^bk_[a-f0-9-]{36}$/.test(booking.booking_id??'')||!booking.seller_payee_id||!booking.pay_to||!Number.isSafeInteger(booking.price)||booking.price<=0||!Array.isArray(rows))return result('invalid_input');
+ const opened=Date.parse(booking.payment_opened_at), deadline=Date.parse(booking.payment_deadline);
+ if(!Number.isFinite(opened)||!Number.isFinite(deadline)||opened>deadline)return result('invalid_input');
  const ids=new Set();
  for(const r of rows){
  if(!r||r.direction!=='incoming'&&r.direction!=='outgoing'||typeof r.transaction_id!=='string'||!r.transaction_id||ids.has(r.transaction_id)||!Number.isSafeInteger(r.amount)||r.amount<=0||![r.payer,r.payee,r.memo,r.observed_at].every(v=>typeof v==='string')||!Number.isFinite(Date.parse(r.observed_at)))return result('invalid_input');
  ids.add(r.transaction_id);
  }
- const candidates=rows.filter(r=>r.direction==='incoming'&&r.payer===booking.seller_payee_id&&r.payee===booking.pay_to&&r.memo===booking.booking_id);
+ const candidates=rows.filter(r=>r.direction==='incoming'&&r.payer===booking.seller_payee_id&&r.payee===booking.pay_to&&Date.parse(r.observed_at)>=opened&&Date.parse(r.observed_at)<=deadline);
  if(candidates.length>1)return result('multiple');
  if(!candidates.length)return result('none');
  if(candidates[0].amount!==booking.price)return result('amount_mismatch');

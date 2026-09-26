@@ -382,16 +382,35 @@ test('host purchased reviews require evidence, keep details private, and share g
  return {subject_id:subject,funding_source:'host_purchased',probe_ids:[probe.probe_id],verdict:'recommended',tested_at:new Date().toISOString(),what_we_called:'Isolated fixture',result_summary:'Clear useful fixture result',pros:['Useful output'],cons:[],how_to_buy:'Fixture only'};};
  const input=await make('purchase-test');
  assert.equal((await post('/admin/reviews',input,auth)).status,400);
- const pe={transaction_id:'txn_'+crypto.randomUUID(),payer:'p_test_recipient',payee:'p_0123456789',amount:5,memo:'purchase:purchase-test',observed_at:new Date().toISOString()};
- assert.equal((await post('/admin/reviews',{...input,purchase_evidence:{...pe,amount:16}},auth)).status,400);
+ const pe={transaction_id:'txn_'+crypto.randomUUID(),payer:'p_test_recipient',payee:'p_0123456789',amount:100,memo:'Roeu',observed_at:new Date().toISOString()};
+ assert.equal((await post('/admin/reviews',{...input,purchase_evidence:{...pe,amount:0}},auth)).status,400);
  assert.equal((await post('/admin/reviews',{...input,purchase_evidence:{...pe,payer:'p_other'}},auth)).status,400);
  const published=await post('/admin/reviews',{...input,purchase_evidence:pe},auth);
  assert.equal(published.status,201);const value=await published.json();
- assert.equal(value.purchase_amount,5);assert.equal(value.purchase_verification,'agent_attested');assert.equal(value.purchase_evidence,undefined);
+ assert.equal(value.purchase_amount,100);assert.equal(value.purchase_verification,'agent_attested');assert.equal(value.purchase_evidence,undefined);
  assert.equal((await post('/admin/reviews',{...input,purchase_evidence:pe},auth)).status,200);
  const other=await make('purchase-second');
  assert.equal((await post('/admin/reviews',{...other,purchase_evidence:{...pe,memo:'purchase:purchase-second'}},auth)).status,409);
  assert.equal(await db.prepare("SELECT review_id FROM reviews WHERE subject_id='purchase-second'").first(),null);
  const existing=await db.prepare("SELECT transaction_id FROM transaction_references WHERE kind='payment' LIMIT 1").first();
  assert.equal((await post('/admin/reviews',{...other,purchase_evidence:{...pe,transaction_id:existing.transaction_id,memo:'purchase:purchase-second'}},auth)).status,409);
+});
+
+test('team memo does not replace identity, amount or payment window verification',async()=>{
+ await db.prepare("UPDATE bookings SET status='cancelled' WHERE status IN ('awaiting_payment','payment_ambiguous')").run();
+ const id=await fresh();
+ assert.equal((await transition(id,'awaiting_payment',{received_baseline:0})).status,200);
+ const e={...evidence(id),memo:'Buyer team'};
+ for(const bad of [{...e,payer:undefined},{...e,amount:4},{...e,payee:'p_other'}])
+  assert.equal((await transition(id,'paid',{payment_evidence:bad})).status,409);
+ const row=await detail(id);
+ for(const observed_at of [new Date(Date.parse(row.payment_opened_at)-1).toISOString(),new Date(Date.parse(row.payment_deadline)+1).toISOString()]){
+  const r=await transition(id,'paid',{payment_evidence:{...e,observed_at}});
+  assert.ok([400,409].includes(r.status));
+ }
+ assert.equal((await transition(id,'paid',{payment_evidence:e})).status,200);
+ assert.equal(JSON.parse((await detail(id)).payment_evidence).memo,'Buyer team');
+ const second=await fresh();
+ await transition(second,'awaiting_payment',{received_baseline:0});
+ assert.equal((await transition(second,'paid',{payment_evidence:{...evidence(second),memo:''}})).status,200);
 });

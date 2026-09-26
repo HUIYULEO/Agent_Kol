@@ -4,9 +4,9 @@ import type { Booking, Env } from './types';
 export function publicBooking(row: Booking) {
   return {
     booking_id: row.booking_id, status: row.status, price: row.price,
-    pay_to: row.pay_to, memo: row.booking_id,
+    pay_to: row.pay_to, memo: 'your team name',
     created_at: row.created_at, updated_at: row.updated_at, payment_deadline: row.payment_deadline, payment_window_open: row.status === 'awaiting_payment' && row.payment_deadline !== null && Date.parse(row.payment_deadline) > Date.now(),
-    payment_instructions: 'Do not pay until payment_window_open is true. Use booking_id as memo. The host agent verifies payment; a payment claim or balance change alone is not transaction proof.'
+    payment_instructions: 'Do not pay until payment_window_open is true. Use your own team name as memo. The host agent verifies payment; a payment claim or balance change alone is not transaction proof.'
   };
 }
 

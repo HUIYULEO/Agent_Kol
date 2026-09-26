@@ -87,10 +87,14 @@ export async function changeStatus(env:Env,id:string,input:Record<string,unknown
     } else if((method==='transaction_reference'||method==='ledger_attested')) {
       onlyKeys(supplied,['method','transaction_id','amount','payer','payee','memo','observed_at']);
       paymentReference=text(supplied.transaction_id,'transaction_id',200); transactionReference=paymentReference;
-      if(integer(supplied.amount,'amount')!==row.price || supplied.payer!==row.seller_payee_id || supplied.payee!==row.pay_to || supplied.memo!==row.booking_id) {
-        throw new HttpError(409,'payment_mismatch','Amount, payer, payee and memo must match this booking.');
+      if(integer(supplied.amount,'amount')!==row.price || supplied.payer!==row.seller_payee_id || supplied.payee!==row.pay_to) {
+        throw new HttpError(409,'payment_mismatch','Amount, payer and payee must match this booking.');
       }
-      evidence={...supplied,observed_at:timestamp(supplied.observed_at,'observed_at'),verification:'agent_attested_transaction'};
+      const observedAt=timestamp(supplied.observed_at,'observed_at');
+      if(!opened||!deadline||Date.parse(observedAt)<Date.parse(opened)||Date.parse(observedAt)>Date.parse(deadline))
+        throw new HttpError(409,'invalid_window','Transaction must be inside this booking payment window.');
+      if(typeof supplied.memo!=='string'||supplied.memo.length>200) throw new HttpError(400,'invalid_input','memo must be a string of up to 200 characters.');
+      evidence={...supplied,observed_at:observedAt,verification:'agent_attested_transaction'};
       // This API records the trusted operator's attestation; it does not query SharedNet.
     } else throw new HttpError(400,'invalid_input','Unsupported payment evidence method.');
   }

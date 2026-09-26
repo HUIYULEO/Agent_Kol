@@ -43,8 +43,8 @@ export async function publishReview(env:Env,input:Record<string,unknown>) {
  let purchase:Record<string,unknown>|null=null;
  if(funding==='host_purchased'){
  const v=object(input.purchase_evidence);onlyKeys(v,['transaction_id','payer','payee','amount','memo','observed_at']);
- const transaction_id=text(v.transaction_id,'transaction_id',200),payer=text(v.payer,'payer',100),payee=text(v.payee,'payee',100),memo=text(v.memo,'memo',200),observed=text(v.observed_at,'observed_at',40);
- if(payer!==env.PAY_TO||!/^p_[a-zA-Z0-9]{10}$/.test(payee)||payee===payer||!Number.isSafeInteger(v.amount)||(v.amount as number)<1||(v.amount as number)>15||memo!=='purchase:'+subject||!Number.isFinite(Date.parse(observed))||Date.parse(observed)>Date.now()+60000)throw new HttpError(400,'invalid_purchase_evidence','Purchase must attest a host payment of 1–15 credits with purchase:subject memo.');
+ const transaction_id=text(v.transaction_id,'transaction_id',200),payer=text(v.payer,'payer',100),payee=text(v.payee,'payee',100),memo=typeof v.memo==='string'&&v.memo.length<=200?v.memo:(()=>{throw new HttpError(400,'invalid_input','memo must be a string of up to 200 characters.');})(),observed=text(v.observed_at,'observed_at',40);
+ if(payer!==env.PAY_TO||!/^p_[a-zA-Z0-9]{10}$/.test(payee)||payee===payer||!Number.isSafeInteger(v.amount)||(v.amount as number)<1||!Number.isFinite(Date.parse(observed))||Date.parse(observed)>Date.now()+60000)throw new HttpError(400,'invalid_purchase_evidence','Purchase must attest a positive integer host payment with payer, payee and transaction timestamp.');
  purchase={transaction_id,payer,payee,amount:v.amount,memo,observed_at:new Date(observed).toISOString(),verification:'agent_attested'};
  }else if(input.purchase_evidence!==undefined)throw new HttpError(400,'invalid_purchase_evidence','Purchase evidence is only allowed for host_purchased.');
  const data={

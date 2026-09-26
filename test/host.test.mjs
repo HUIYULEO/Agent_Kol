@@ -21,9 +21,14 @@ test('host 409 reads once more, never repeats mutation; strips headers and secre
  const s=await runHost(['stats'],{token,send:async()=>Response.json({value:token})});assert.equal(s.data.value,'[REDACTED_ADMIN_TOKEN]');
 });
 test('fixture ledger matching is explicit, exact and rejects duplicate/ambiguous evidence',()=>{
- const b={booking_id:id,seller_payee_id:'p_seller',pay_to:'p_host',price:5};
+ const b={booking_id:id,seller_payee_id:'p_seller',pay_to:'p_host',price:5,payment_opened_at:'2026-09-26T00:00:00Z',payment_deadline:'2026-09-26T00:03:00Z'};
  const r={direction:'incoming',transaction_id:'txn_fixture',amount:5,payer:'p_seller',payee:'p_host',memo:id,observed_at:'2026-09-26T00:00:00Z'};
  assert.equal(matchFixture(b,[r]).match,'unique');assert.equal(matchFixture(b,[r]).simulation_only,true);
+ assert.equal(matchFixture(b,[{...r,memo:'Another team'}]).match,'unique');
+ assert.equal(matchFixture(b,[{...r,memo:''}]).match,'unique');
+ assert.equal(matchFixture(b,[{...r,observed_at:'2026-09-25T23:59:59Z'}]).match,'none');
+ assert.equal(matchFixture(b,[{...r,observed_at:'2026-09-26T00:03:01Z'}]).match,'none');
+ assert.equal(matchFixture({...b,payment_opened_at:null},[r]).match,'invalid_input');
  assert.equal(matchFixture(b,[]).match,'none');
  assert.equal(matchFixture(b,[{...r,payer:'p_other'}]).match,'none');
  assert.equal(matchFixture(b,[{...r,direction:'outgoing'}]).match,'none');
