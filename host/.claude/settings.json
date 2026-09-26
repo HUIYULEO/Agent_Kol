@@ -8,8 +8,12 @@
       "mcp__claude_ai_sharednet__whoami",
       "Read(./state/**)",
       "Edit(./state/**)",
+      "Write(./state/**)",
       "Read(../docs/host-playbook.md)",
-      "mcp__claude_ai_sharednet__join"
+      "mcp__claude_ai_sharednet__join",
+      "Bash(date:*)",
+      "mcp__claude_ai_sharednet__pay",
+      "Bash(node ../scripts/ledger-match.mjs:*)"
     ],
     "deny": [
       "Read(~/.agent-kol/**)",
@@ -20,7 +24,6 @@
       "Bash(type:*)",
       "Bash(printenv:*)",
       "Bash(env:*)",
-      "mcp__claude_ai_sharednet__pay",
       "mcp__claude_ai_sharednet__redeem_credits",
       "mcp__claude_ai_sharednet__file_write",
       "mcp__claude_ai_sharednet__room_invite",

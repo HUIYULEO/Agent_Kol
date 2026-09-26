@@ -49,12 +49,21 @@ test('bounded SSE reads first event only, handles split UTF8 and multiline data,
  const abort=new AbortController();const pending=probeBody(new Response(new ReadableStream({pull(){}})),true,abort.signal);abort.abort();await assert.rejects(pending);
 });
 
-test('host help works without credentials and live ledger refuses unknown transfer shapes',async()=>{
+test('host help works without credentials and live ledger hands raw records to the host',async()=>{
  const {matchLive}=await import('../scripts/ledger-match.mjs');
  assert.equal((await main([],{})).ok,true);assert.equal((await main(['help'],{})).ok,true);
  assert.equal(matchLive({}, {items:[],next_cursor:null,has_more:false}).match,'none');
- assert.equal(matchLive({}, {items:[{amount:5}],next_cursor:null,has_more:false}).match,'unparseable');
  assert.equal(matchLive({}, {items:[],next_cursor:'txn_next',has_more:true}).match,'unparseable');
+ assert.equal(matchLive({}, {items:'not-an-array',next_cursor:null,has_more:false}).match,'unparseable');
+ // Field names are undocumented, so records are surfaced verbatim rather than mapped.
+ const record={id:'txn_9',from:'p_buyer0001',to:'p_umBqZvkim8',amount:5,memo:'TeamX'};
+ const live=matchLive({pay_to:'p_umBqZvkim8',price:5},{items:[record],next_cursor:null,has_more:false});
+ assert.equal(live.match,'read_records');
+ assert.deepEqual(live.records,[record]);
+ assert.deepEqual(live.expect,{payee:'p_umBqZvkim8',amount:5});
+ // No mapping is invented, so nothing is reported as a confirmed match.
+ assert.equal(live.fixture_evidence,undefined);
+ assert.equal(matchLive(undefined,{items:[record],next_cursor:null,has_more:false}).expect.payee,null);
 });
 test('purchase planning enforces authorization, per-service/total limits, reserves and uncertain results',async()=>{
  const {purchasePlan,main:purchaseMain}=await import('../scripts/purchase.mjs');

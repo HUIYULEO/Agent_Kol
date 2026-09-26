@@ -20,11 +20,14 @@ export function matchFixture(booking,rows){
  const {direction,...evidence}=candidates[0];return result('unique',{fixture_evidence:{method:'ledger_attested',...evidence}});
 }
 
-// Official OpenAPI names CreditTransfer but provides no field schema.
+// Official OpenAPI names CreditTransfer but provides no field schema, so this does not
+// map fields. It hands the raw records to the host, who reads them and decides.
 export function matchLive(booking,payload){
  if(!payload||!Array.isArray(payload.items)||typeof payload.has_more!=='boolean'||!(payload.next_cursor===null||typeof payload.next_cursor==='string'))return {match:'unparseable'};
- if(payload.items.length)return {match:'unparseable',reason:'credit_transfer_fields_unverified'};
- return payload.has_more?{match:'unparseable',reason:'incomplete_page'}:{match:'none'};
+ if(!payload.items.length)return payload.has_more?{match:'unparseable',reason:'incomplete_page'}:{match:'none'};
+ return {match:'read_records',records:payload.items,has_more:payload.has_more,
+  expect:{payee:booking?.pay_to??null,amount:booking?.price??null},
+  note:'Field names are undocumented, so read each record yourself. Mark paid only when exactly one record shows our principal as the recipient for the expected amount, then write that record into an evidence file for host.mjs mark-paid. If no record or more than one fits, do not mark paid.'};
 }
 export async function readLiveLedger(last=100,run=promisify(execFile)){
  if(!Number.isSafeInteger(last)||last<1||last>100)throw Error('invalid_limit');
@@ -41,4 +44,4 @@ export async function main(args){
  if(args.length!==5||args[0]!=='--fixture'||args[1]!=='--booking-file'||args[3]!=='--ledger-file')return {simulation_only:true,match:'invalid_arguments'};
  try{return matchFixture(JSON.parse(await readFile(args[2],'utf8')),JSON.parse(await readFile(args[4],'utf8')));}catch{return {simulation_only:true,match:'invalid_input'};}
 }
-if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){const result=await main(process.argv.slice(2));console.log(JSON.stringify(result));if(!['unique','none'].includes(result.match))process.exitCode=1;}
+if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){const result=await main(process.argv.slice(2));console.log(JSON.stringify(result));if(!['unique','none','read_records'].includes(result.match))process.exitCode=1;}
