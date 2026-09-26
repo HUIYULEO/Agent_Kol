@@ -32,3 +32,15 @@ node scripts/ledger-match.mjs --fixture --booking-file booking.json --ledger-fil
 这是规范化 fixture 匹配器，**尚未接真实 CLI 输出**。booking 文件包含 booking_id、seller_payee_id、pay_to、price；ledger 数组的每项包含 direction(incoming/outgoing)、transaction_id、amount、payer、payee、memo、observed_at。返回 simulation_only=true，match 为 unique/none/multiple/amount_mismatch/invalid_input；唯一结果放在 fixture_evidence，不是可直接交给 mark-paid 的证据。重复交易 ID、缺失字段、非法时间拒绝，多个匹配不自动择一。
 
 已安装 SharedNet CLI 0.1.8 的 ledger 不支持 --json。真实字段和只读调用需登录恢复后实测；当前不伪造适配器，也不重新发起登录。正式查账应使用权威逐笔 ledger，不取账户总额差值。
+
+## 最小 MVP 更新（2026-09-26）
+
+host.mjs 无参数、help、--help、-h 均可在不读取管理员令牌的情况下输出一行 JSON 用法。
+
+host_purchased 发布通路已支持 purchase_evidence：transaction_id、payer、payee、amount、memo、observed_at。payer 必须为配置的主播 principal，payee 为另一个 principal，amount为1–15整数，memo为 purchase:subject_id。公开仅展示 purchase_amount 与 agent_attested，不公开原始采购账本字段。交易 ID 与 seller_paid 的付款/退款共用唯一引用表；同一 subject 的同内容重试幂等。此接口登记主播的查账声明，不会发起付款，也不等于 Worker 独立查账。
+
+ledger-match.mjs --live --booking-file FILE [--last N] 通过固定 sharednet@0.1.8 只读读取 ledger。Windows 使用 Ubuntu-20.04 和已安装 Node22.23.3 的绝对路径；迁移机器时应调整该运行时路径。已实测登录可用、空账本返回 none。官方 API 文档与 /api/v1/openapi.json 目前仅列出 CreditTransfer 名称，未定义字段；非空记录保守返回 unparseable，不猜字段或标为已核验。待后续真实积分测试确认字段后补映射。
+
+purchase.mjs --dry-run --fixture-file scenario.json 仅验证采购计划，无实际付款通道。夹具包含 authorization{purchases_enabled,budget,expires_at}、request{subject_id,url,amount,payee?}、target{url,state,seller_principal?}、balance、unsettled_orders、events。上限：单笔/同URL累计15、总预算最多90、保留10+未结订单数×5；未知/pending结果、重复交易拒绝。events为每个operation当前状态的测试输入，不是已实现的持久支出账本。真实启动授权文件读取、原子锁、追加支出日志及实际pay仍留到后续启用阶段；不宣称该dry-run已经可用于无人值守转账。自动退款不在当前MVP。
+
+测评优先发现亮点，尽量给有依据的推荐；不编造、不隐瞒关键失败，付费不直接决定结论。

@@ -40,7 +40,7 @@ async function load(){
    for(const p of r.evidence||[]){proof.append(el('p','',p.method+' '+p.url+' · '+(p.status??p.outcome)+' · '+p.latency_ms+' ms'),el('pre','',p.response_excerpt));}
    proof.append(el('pre','',r.reproduce_cmd||'Legacy review: no stored probe evidence.'));
    if(r.seller_response)proof.append(el('h4','','Seller response'),el('p','',r.seller_response.response));
-   card.append(meta,el('p','muted',funds[r.funding_source]||'Legacy'),el('h3','',r.result_summary),el('p','',r.what_we_called),proof,a);list.append(card);
+   card.append(meta,el('p','muted',r.funding_source==='host_purchased'?'主播自费购买 · '+r.purchase_amount+' 积分 · agent_attested':funds[r.funding_source]||'Legacy'),el('h3','',r.result_summary),el('p','',r.what_we_called),proof,a);list.append(card);
   }
   const q=document.querySelector('#queue-list');q.replaceChildren();
   if(!queue.items.length)q.append(el('p','muted','No confirmed bookings yet. Reserve a review to get started.'));

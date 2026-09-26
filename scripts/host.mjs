@@ -57,6 +57,7 @@ export async function runHost(args,{token,base=production,send=fetch,load=readFi
  }catch(e){return {ok:false,status:e instanceof HostError?e.status:0,error:{code:e instanceof HostError?e.code:'local_error'},...(e instanceof HostError?e.details:{})};}
 }
 export async function main(args,env=process.env){
+ if(!args.length||args.length===1&&['help','--help','-h'].includes(args[0]))return {"ok":true,"usage":["bookings [--status S]","booking ID","open-window ID","mark-paid ID --evidence-file FILE","set-status ID STATUS [--reason TEXT]","approve-target --url URL --source-kind booking|room_message --source-ref ID --confirm-public --confirm-safe","revoke-target --url URL --reason TEXT","probe --subject ID --url URL [--post-body-file FILE] [--accept-mcp]","publish --file FILE","stats"],"credentials":"ADMIN_TOKEN_FILE only; never put tokens in arguments."};
  try{
  if(!env.ADMIN_TOKEN_FILE)return {ok:false,status:0,error:{code:'admin_token_file_required'}};
  const raw=await readFile(env.ADMIN_TOKEN_FILE,'utf8');

@@ -375,3 +375,23 @@ test('MCP probe accepts only fixed negotiation and records first SSE tool summar
  const unsupported=await (await post('/admin/probe',{...input,subject_id:'no-mcp-accept'},auth)).json();
  assert.equal(unsupported.outcome,'unsupported_content');
 });
+
+test('host purchased reviews require evidence, keep details private, and share global transaction uniqueness',async()=>{
+ const make=async subject=>{
+ const probe=await (await post('/admin/probe',{subject_id:subject,url:'https://public.example/data'},auth)).json();
+ return {subject_id:subject,funding_source:'host_purchased',probe_ids:[probe.probe_id],verdict:'recommended',tested_at:new Date().toISOString(),what_we_called:'Isolated fixture',result_summary:'Clear useful fixture result',pros:['Useful output'],cons:[],how_to_buy:'Fixture only'};};
+ const input=await make('purchase-test');
+ assert.equal((await post('/admin/reviews',input,auth)).status,400);
+ const pe={transaction_id:'txn_'+crypto.randomUUID(),payer:'p_test_recipient',payee:'p_0123456789',amount:5,memo:'purchase:purchase-test',observed_at:new Date().toISOString()};
+ assert.equal((await post('/admin/reviews',{...input,purchase_evidence:{...pe,amount:16}},auth)).status,400);
+ assert.equal((await post('/admin/reviews',{...input,purchase_evidence:{...pe,payer:'p_other'}},auth)).status,400);
+ const published=await post('/admin/reviews',{...input,purchase_evidence:pe},auth);
+ assert.equal(published.status,201);const value=await published.json();
+ assert.equal(value.purchase_amount,5);assert.equal(value.purchase_verification,'agent_attested');assert.equal(value.purchase_evidence,undefined);
+ assert.equal((await post('/admin/reviews',{...input,purchase_evidence:pe},auth)).status,200);
+ const other=await make('purchase-second');
+ assert.equal((await post('/admin/reviews',{...other,purchase_evidence:{...pe,memo:'purchase:purchase-second'}},auth)).status,409);
+ assert.equal(await db.prepare("SELECT review_id FROM reviews WHERE subject_id='purchase-second'").first(),null);
+ const existing=await db.prepare("SELECT transaction_id FROM transaction_references WHERE kind='payment' LIMIT 1").first();
+ assert.equal((await post('/admin/reviews',{...other,purchase_evidence:{...pe,transaction_id:existing.transaction_id,memo:'purchase:purchase-second'}},auth)).status,409);
+});

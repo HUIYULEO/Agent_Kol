@@ -1,3 +1,5 @@
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
 import {readFile} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
 // Canonical FIXTURE format, deliberately not an adapter for an unverified live ledger.
@@ -15,8 +17,26 @@ export function matchFixture(booking,rows){
  if(candidates[0].amount!==booking.price)return result('amount_mismatch');
  const {direction,...evidence}=candidates[0];return result('unique',{fixture_evidence:{method:'ledger_attested',...evidence}});
 }
+
+// Official OpenAPI names CreditTransfer but provides no field schema.
+export function matchLive(booking,payload){
+ if(!payload||!Array.isArray(payload.items)||typeof payload.has_more!=='boolean'||!(payload.next_cursor===null||typeof payload.next_cursor==='string'))return {match:'unparseable'};
+ if(payload.items.length)return {match:'unparseable',reason:'credit_transfer_fields_unverified'};
+ return payload.has_more?{match:'unparseable',reason:'incomplete_page'}:{match:'none'};
+}
+export async function readLiveLedger(last=100,run=promisify(execFile)){
+ if(!Number.isSafeInteger(last)||last<1||last>100)throw Error('invalid_limit');
+ const args=['ledger','--last',String(last)];
+ const result=process.platform==='win32'
+ ?await run('wsl.exe',['-d','Ubuntu-20.04','--exec','env','PATH=/home/luhy/.local/share/agent-kol-node/node-v22.23.3-linux-x64/bin:/usr/bin:/bin','npx','-y','sharednet@0.1.8',...args],{timeout:45000,maxBuffer:262144,windowsHide:true})
+ :await run('npx',['-y','sharednet@0.1.8',...args],{timeout:45000,maxBuffer:262144});
+ return JSON.parse(result.stdout);
+}
 export async function main(args){
+ if(args[0]==='--live'&&args[1]==='--booking-file'&&args[2]&&(args.length===3||args.length===5&&args[3]==='--last')){
+ try{const booking=JSON.parse(await readFile(args[2],'utf8'));return matchLive(booking,await readLiveLedger(args[4]===undefined?100:Number(args[4])));}catch{return {match:'unparseable',reason:'ledger_read_failed'};}
+ }
  if(args.length!==5||args[0]!=='--fixture'||args[1]!=='--booking-file'||args[3]!=='--ledger-file')return {simulation_only:true,match:'invalid_arguments'};
  try{return matchFixture(JSON.parse(await readFile(args[2],'utf8')),JSON.parse(await readFile(args[4],'utf8')));}catch{return {simulation_only:true,match:'invalid_input'};}
 }
-if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){const result=await main(process.argv.slice(2));console.log(JSON.stringify(result));if(result.match!=='unique')process.exitCode=1;}
+if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){const result=await main(process.argv.slice(2));console.log(JSON.stringify(result));if(!['unique','none'].includes(result.match))process.exitCode=1;}
