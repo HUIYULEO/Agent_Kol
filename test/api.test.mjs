@@ -269,7 +269,7 @@ test('probe bounds total time and omits invalid JSON; nested truncation is expli
 
 test('runtime approval binds exact URL and provenance; POST transports JSON without admin credentials',async()=>{
  const url='https://runtime.example/echo?q=hello&n=1';
- const approval={url,source_kind:'room_message',source_ref:'msg_publicFixture',publicly_provided:true,reviewed_safe:true};
+ const approval={url,source_kind:'room_message',source_ref:'msg_0123456789',publicly_provided:true,reviewed_safe:true};
  assert.equal((await post('/admin/probe-targets',approval)).status,401);
  assert.equal((await post('/admin/probe',{subject_id:'runtime',url,method:'POST',body:{}},auth)).status,403);
  for(const extra of [{publicly_provided:false},{reviewed_safe:false},{source_ref:'not-a-reference'}])
@@ -294,11 +294,28 @@ test('runtime approval binds exact URL and provenance; POST transports JSON with
  assert.equal(requests.filter(r=>r.status===201).length,5);assert.equal(requests.filter(r=>r.status===409).length,2);
 });
 test('runtime targets reject literals, private DNS, resolver failure, secrets and DNS changes',async()=>{
- const a={source_kind:'room_message',source_ref:'msg_publicFixture',publicly_provided:true,reviewed_safe:true};
+ const a={source_kind:'room_message',source_ref:'msg_0123456789',publicly_provided:true,reviewed_safe:true};
  for(const url of ['http://runtime.example/a','https://127.0.0.1/','https://0x7f000001/','https://[::ffff:127.0.0.1]/','https://169.254.169.254/','https://private.example/a','https://link.example/a','https://rfc1918.example/a','https://shared.example/a','https://v6private.example/a','https://v6mapped.example/a','https://dnsfail.example/a','https://runtime.example/a?api_key=secret','https://runtime.example/a?email=a%40b.com']){
  const r=await post('/admin/probe-targets',{...a,url},auth);assert.equal(r.status,400,url);
  }
  await db.prepare('INSERT INTO probe_targets(url,source_kind,source_ref,approved_at) VALUES(?,?,?,?)').bind('https://private.example/a','room_message','msg_oldApproval',new Date().toISOString()).run();
  assert.equal((await post('/admin/probe',{subject_id:'rebind',url:'https://private.example/a'},auth)).status,400);
  assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM probes WHERE subject_id='rebind'").first()).n,0);
+});
+
+test('redaction preserves ordinary field names, public URL paths and business IDs while masking secrets',async()=>{
+ const url='https://runtime.example/echo?author=public';
+ const a={url,source_kind:'room_message',source_ref:'msg_0123456789',publicly_provided:true,reviewed_safe:true};
+ assert.equal((await post('/admin/probe-targets',{...a,source_ref:'msg_a'},auth)).status,400);
+ assert.equal((await post('/admin/probe-targets',a,auth)).status,201);
+ const publicText='We tested booking bk_69dafc51-bcf9-478b-83c5-d7f69553e396 end to end. Evidence probe prb_4e9ceba0-1234-4567-8901-123456789012 recorded the call. Called https://api.example.com/v1/organizations/acme-production/resources';
+ const payload={description:publicText,author:'public',recipient:'public',zip:'public',participants:['public'],script_url:'https://api.example.com/v1/organizations/acme-production/resources'};
+ const p=await post('/admin/probe',{subject_id:'redaction-regression',url,method:'POST',body:payload},auth);
+ assert.equal(p.status,201);const record=await p.json();assert.deepEqual(record.request_body,payload);
+ assert.deepEqual(JSON.parse(record.response_excerpt).body,payload);
+ const r=await post('/admin/reviews',{subject_id:'redaction-regression',funding_source:'demo_example',probe_ids:[record.probe_id],verdict:'inconclusive',tested_at:new Date().toISOString(),what_we_called:publicText,result_summary:publicText,pros:[],cons:['a'.repeat(40)],how_to_buy:'No purchase'},auth);
+ assert.equal(r.status,201);const review=await r.json();assert.equal(review.what_we_called,publicText);assert.equal(review.result_summary,publicText);assert.deepEqual(review.cons,['[REDACTED_VALUE]']);
+ for(const key of ['token','password','api_key','email','authorization','accessToken','refresh_token','clientSecret','ip_address']){
+ assert.equal((await post('/admin/probe',{subject_id:'secret-body',url,method:'POST',body:{[key]:'private'}},auth)).status,400,key);
+ }
 });

@@ -19,7 +19,7 @@ export function publicUrl(value:unknown):string {
  return u.href;
 }
 function decodeURIComponentSafe(s:string){try{return decodeURIComponent(s);}catch{return s;}}
-const sensitiveKey=(s:string)=>/token|secret|password|auth|cookie|api.?key|email|signature|credential/i.test(s);
+const sensitiveKey=(s:string)=>/^(authorization|auth|token|accesstoken|refreshtoken|idtoken|secret|clientsecret|password|passwd|cookie|setcookie|key|apikey|email|phone|ip|ipaddress|address|credential|credentials|signature)$/.test(s.replace(/[^a-z0-9]/gi,'').toLowerCase());
 export function publicAddress(ip:string):boolean {
  if(/^\d+\.\d+\.\d+\.\d+$/.test(ip)){
  const n=ip.split('.').map(Number);if(n.some(v=>v>255))return false;const [a,b,c]=n;
@@ -54,7 +54,7 @@ export async function approveTarget(env:Env,input:Record<string,unknown>){
  if(!['room_message','booking'].includes(String(input.source_kind))||input.publicly_provided!==true||input.reviewed_safe!==true)
  throw new HttpError(400,'review_required','Confirm a publicly supplied seller URL and a safe nonfinancial test.');
  const source=text(input.source_ref,'source_ref',100);
- if(!(input.source_kind==='room_message'?/^msg_[a-zA-Z0-9]+$/:/^bk_[a-f0-9-]+$/).test(source))
+ if(!(input.source_kind==='room_message'?/^msg_[a-zA-Z0-9]{10}$/:/^bk_[a-f0-9-]+$/).test(source))
  throw new HttpError(400,'invalid_source','Use a message or booking ID as provenance.');
  if(input.source_kind==='booking'&&!await env.DB.prepare('SELECT booking_id FROM bookings WHERE booking_id=?').bind(source).first())
  throw new HttpError(400,'invalid_source','Booking not found.');
@@ -73,14 +73,14 @@ export function redact(value:string):string {
  return value.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi,'[REDACTED_EMAIL]')
  .replace(/\b(?:Bearer|Basic)\s+[^\s"<>]+/gi,'[REDACTED_AUTH]')
  .replace(/((?:api[_-]?key|token|secret|password|authorization|cookie)\s*["']?\s*[:=]\s*["']?)[^\s"',;}]+/gi,'$1[REDACTED]')
- .replace(/\b[A-Za-z0-9_\/-]{24,}(?:\.[A-Za-z0-9_-]+){0,2}\b/g,'[REDACTED_VALUE]');
+ .replace(/\b[A-Za-z0-9_]{24,}(?:\.[A-Za-z0-9_-]+){0,2}\b/g,'[REDACTED_VALUE]');
 }
 function cleanJson(value:unknown,state:{truncated:boolean},depth=0):unknown {
  if(depth>12){state.truncated=true;return '[TRUNCATED_DEPTH]';}
  if(typeof value==='string'){const safe=redact(value);if(safe.length>2048)state.truncated=true;return safe.slice(0,2048);}
  if(Array.isArray(value)){if(value.length>40)state.truncated=true;return value.slice(0,40).map(v=>cleanJson(v,state,depth+1));}
  if(value&&typeof value==='object'){if(Object.keys(value).length>40)state.truncated=true;return Object.fromEntries(Object.entries(value).slice(0,40).map(([k,v])=>[
- redact(k),/token|secret|password|auth|cookie|key|email|address|phone|ip/i.test(k)?'[REDACTED]':cleanJson(v,state,depth+1)]));}
+ redact(k),sensitiveKey(k)?'[REDACTED]':cleanJson(v,state,depth+1)]));}
  return value;
 }
 const shellQuote=(s:string)=>"'"+s.replaceAll("'","'\\''")+"'";

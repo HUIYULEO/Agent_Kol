@@ -50,3 +50,12 @@
 - 线上白名单审批：无认证401、有认证201；POST probe=201，JSONPlaceholder /posts 返回201 observed，319ms，实际请求体匹配。官方指南明确该接口只模拟写入，不保存真实资源。未发布新测评，无真实资金动作。
 - 安全边界：DNS预检不是连接IP固定；生产仅使用无origin/VPC绑定的Cloudflare Workers global fetch。来源真实性和非资金操作仍须主播审核。需自定义Accept/SSE/会话认证的完整MCP流程不在单次POSTJSON支持范围。
 - ledger只读验证：Windows CLI0.1.8不支持 --help，源码用法 ledger --last N [--before txn]；本地安全存储拒绝win32。WSL Ubuntu原Node10不满足CLI>=22.18，用户目录安装官方SHA256核验的Node22.23.3，系统Node未替换。已启动浏览器登录，等待用户授权；尚未取得账本记录，付款人/收款人/金额/memo/交易ID/时间字段完整性不能确认。
+
+## 2026-09-26 审查 #52 脱敏修复
+
+- typecheck 与25/25测试通过。新增回归证明 description/author/recipient/zip/participants/script_url 正常值保留；正文中的 booking/probe UUID和长公开URL保留；40位无分隔串仍打码。
+- 敏感键改为标准化后整键匹配，覆盖 snake_case/camelCase 的 access token、refresh token、client secret 等；值脱敏不再跨斜杠或连字符吞掉公开路径/UUID。
+- room_message 来源ID收紧为 msg_ 后10位字母数字；这仅验证形状，不验证消息存在性。未把它升级为机器验证溯源。
+- 补齐卖家回应与凭据签发诊断路由；wrangler配置写明公网出口依赖，不可随意添加origin/VPC私网绑定。
+- 本轮不修改产品负责人创建的 host/配置及未跟踪文档，保留他人修改。
+本轮 Worker 版本：f621d2cc-c9fe-4f0d-9ddb-451fab3d1927。

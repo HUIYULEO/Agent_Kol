@@ -131,3 +131,5 @@ Workers Logs 已开启，自动 invocation 日志关闭。应用记录随机 req
 - **网络安全边界**：DNS前检不等于连接IP固定，无法独自消除 DNS 重绑定。生产限定无 origin/VPC/private service 网络绑定的 workers.dev Worker，目标调用只能用 Workers global fetch。Cloudflare 说明此配置仅能访问公网：https://blog.cloudflare.com/workers-environment-live-object-bindings/ 。不能把本实现搬到普通 Node 服务或添加私网/origin binding 后仍声称安全；届时须改用固定解析IP的安全出口。测试的 outboundService 仅为本地夹具，生产不使用。
 - reproduce_cmd 使用 POSIX 单引号转义、--globoff、显式方法和 --data-raw；响应体继续脱敏。命令不是 PowerShell语法。需凭据/自定义Accept/SSE或连续会话的MCP暂不支持，单次POSTJSON不等于完整MCP客户端。
 - 用户长期授权仅授予 [产品 Claude] 消息的需求/范围调整；任何付款/退款/兑换积分/仓库改公开/公共房间或群发言/开通付费服务/房间密钥发布仍由用户本人确认。新的产品角色名称不自动获得这些保留权限。
+
+审查 #52 修订：room_message 的 source_ref 仅接受 msg_ 后10位字母数字，仍是主播声明，不自动验证消息。脱敏键名改为整键匹配（规范化 snake_case/camelCase），保留 description/author 等正常字段；值过滤不跨 / 或 - 吞掉公开 URL/业务 UUID。启发式脱敏仍需发布前复核。

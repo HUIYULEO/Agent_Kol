@@ -12,5 +12,7 @@ export function routeLabel(path:string) {
  if(/^\/reviews\/rev_[a-f0-9-]+$/.test(path))return '/reviews/:id';
  if(/^\/admin\/bookings\/bk_[a-f0-9-]+\/status$/.test(path))return '/admin/bookings/:id/status';
  if(/^\/admin\/bookings\/bk_[a-f0-9-]+$/.test(path))return '/admin/bookings/:id';
+ if(/^\/reviews\/rev_[a-f0-9-]+\/response$/.test(path))return '/reviews/:id/response';
+ if(/^\/admin\/reviews\/rev_[a-f0-9-]+\/response-token$/.test(path))return '/admin/reviews/:id/response-token';
  return 'unmatched';
 }
