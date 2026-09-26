@@ -19,9 +19,9 @@ export function matchFixture(booking,rows){
  const {evidence,...result}=matchRows(booking,rows);
  return {simulation_only:true,...result,...(evidence?{fixture_evidence:evidence}:{})};
 }
-// The transfer item schema has not been observed yet (the ledger was empty). Each field is
-// read only when exactly one known name is present; anything else is schema_unknown, so an
-// unrecognized ledger can never produce a match.
+// Official OpenAPI names CreditTransfer but defines no fields, and the dev ledger was empty.
+// Each field is read only when exactly one known name is present; anything else is
+// unparseable, so an unrecognized ledger can never produce a match.
 const FIELDS={
  transaction_id:['id','transfer_id','transaction_id'],amount:['amount','credits'],
  payer:['from','from_principal_id','from_id','sender','payer'],payee:['to','to_principal_id','to_id','recipient','payee'],
@@ -47,40 +47,60 @@ export function normalizeTransfer(item,payTo){
  if(payer===undefined)return {error:'payer'};if(payee===undefined)return {error:'payee'};
  if(v.memo!==null&&typeof v.memo!=='string')return {error:'memo'};
  if(typeof v.observed_at!=='string'||!Number.isFinite(Date.parse(v.observed_at)))return {error:'observed_at'};
- const direction=payee===payTo?'incoming':payer===payTo?'outgoing':null;
+ const direction=payTo&&payee===payTo?'incoming':payTo&&payer===payTo?'outgoing':null;
  if(!direction)return {error:'parties'};
  // Incoming must be a positive integer; an outgoing amount may be signed.
  if(!Number.isSafeInteger(v.amount)||v.amount===0||direction==='incoming'&&v.amount<0)return {error:'amount'};
  return {row:{direction,transaction_id:v.transaction_id,amount:Math.abs(v.amount),payer:payer??'',payee:payee??'',memo:v.memo??'',observed_at:new Date(v.observed_at).toISOString()}};
 }
 const keysOf=item=>item&&typeof item==='object'?Object.keys(item).sort():[];
-export function runSharednet(args){
- if(process.platform==='win32')return Promise.resolve({ok:false,code:'run_in_wsl'});
- return new Promise(resolve=>execFile('sharednet',['--json',...args],{timeout:20000,maxBuffer:4*1024*1024,windowsHide:true},(error,stdout)=>{
+const unparseable=(reason,extra={})=>({match:'unparseable',reason,...extra});
+function rowsOf(items,payTo){
+ const rows=[];
+ for(const item of items){const n=normalizeTransfer(item,payTo);if(n.error)return unparseable('credit_transfer_fields_unverified',{field:n.error,item_keys:keysOf(item)});rows.push(n.row);}
+ return {rows};
+}
+// Evaluate one complete ledger payload ({items,next_cursor,has_more}).
+export function matchLive(booking,payload){
+ if(!payload||!Array.isArray(payload.items)||typeof payload.has_more!=='boolean'||!(payload.next_cursor===null||typeof payload.next_cursor==='string'))return unparseable('page_shape',{item_keys:keysOf(payload)});
+ const r=rowsOf(payload.items,booking?.pay_to);if(r.match)return r;
+ if(payload.has_more)return unparseable('incomplete_page');
+ return r.rows.length?matchRows(booking,r.rows):{match:'none'};
+}
+// Windows cannot store SharedNet credentials, so it runs the pinned CLI inside WSL.
+export function runSharednet(args,run=execFile){
+ const cli=['-y','sharednet@0.1.8','--json',...args];
+ const [cmd,argv]=process.platform==='win32'
+ ?['wsl.exe',['-d','Ubuntu-20.04','--exec','env','PATH=/home/luhy/.local/share/agent-kol-node/node-v22.23.3-linux-x64/bin:/usr/bin:/bin','npx',...cli]]
+ :['npx',cli];
+ return new Promise(resolve=>run(cmd,argv,{timeout:45000,maxBuffer:4*1024*1024,windowsHide:true},(error,stdout)=>{
  if(error)return resolve({ok:false,code:error.code==='ENOENT'?'cli_not_found':'cli_failed'});
  try{resolve({ok:true,data:JSON.parse(stdout)});}catch{resolve({ok:false,code:'cli_invalid_output'});}
  }));
 }
-// Read pages until the ledger reaches transfers older than the booking; never guess past a page limit.
-export async function readLive(booking,{run=runSharednet,maxPages=10}={}){
- const rows=[],created=Date.parse(booking?.created_at);
+// Read pages until transfers predate the booking or the ledger ends; never guess past the page limit.
+export async function readLive(booking,{run=runSharednet,maxPages=10,last=100}={}){
+ const items=[],created=Date.parse(booking?.created_at);
  if(!Number.isFinite(created))return {match:'invalid_input'};
  let before;
  for(let page=1;page<=maxPages;page++){
- const r=await run(['ledger','--last','100',...(before?['--before',before]:[])]);
- if(!r.ok)return {match:'ledger_unavailable',reason:r.code};
- const {items,has_more:more,next_cursor:cursor}=r.data??{};
- if(!Array.isArray(items)||typeof more!=='boolean')return {match:'schema_unknown',field:'page',item_keys:keysOf(r.data)};
- let older=items.length>0;
- for(const item of items){
- const n=normalizeTransfer(item,booking.pay_to);if(n.error)return {match:'schema_unknown',field:n.error,item_keys:keysOf(item)};
- rows.push(n.row);if(Date.parse(n.row.observed_at)>=created)older=false;
+ const r=await run(['ledger','--last',String(last),...(before?['--before',before]:[])]);
+ if(!r.ok)return unparseable('ledger_read_failed',{cli:r.code});
+ const p=r.data;
+ if(!p||!Array.isArray(p.items)||typeof p.has_more!=='boolean')return unparseable('page_shape',{item_keys:keysOf(p)});
+ const rows=rowsOf(p.items,booking.pay_to);if(rows.match)return rows;
+ items.push(...p.items);
+ const older=rows.rows.length>0&&rows.rows.every(row=>Date.parse(row.observed_at)<created);
+ if(!p.has_more||older)return {payload:{items,next_cursor:null,has_more:false},pages:page};
+ if(typeof p.next_cursor!=='string'||!TXN.test(p.next_cursor))return unparseable('next_cursor');
+ before=p.next_cursor;
  }
- if(!more||older)return {rows,pages:page};
- if(typeof cursor!=='string'||!TXN.test(cursor))return {match:'schema_unknown',field:'next_cursor',item_keys:keysOf(r.data)};
- before=cursor;
- }
- return {match:'ledger_incomplete',pages:maxPages};
+ return unparseable('ledger_incomplete',{pages:maxPages});
+}
+function options(args,allowed){
+ const o={};
+ for(let i=0;i<args.length;i+=2){const k=args[i],v=args[i+1];if(!allowed.includes(k)||k in o||v===undefined)return null;o[k]=v;}
+ return o;
 }
 async function loadBooking(path){
  const raw=JSON.parse(await readFile(path,'utf8'));
@@ -92,23 +112,29 @@ export async function main(args,{run=runSharednet,write=writeFile}={}){
  try{return matchFixture(JSON.parse(await readFile(args[2],'utf8')),JSON.parse(await readFile(args[4],'utf8')));}catch{return {simulation_only:true,match:'invalid_input'};}
  }
  if(args[0]==='--check'){
- if(args.length!==3||args[1]!=='--pay-to'||!/^p_[A-Za-z0-9_-]+$/.test(args[2]))return {match:'invalid_arguments'};
+ const o=options(args.slice(1),['--pay-to']);
+ if(!o||!/^p_[A-Za-z0-9_-]+$/.test(o['--pay-to']??''))return {match:'invalid_arguments'};
  const r=await run(['ledger','--last','20']);
- if(!r.ok)return {schema:'ledger_unavailable',reason:r.code};
- const items=r.data?.items;
- if(!Array.isArray(items))return {schema:'schema_unknown',field:'page',item_keys:keysOf(r.data)};
- for(const item of items){const n=normalizeTransfer(item,args[2]);if(n.error)return {schema:'schema_unknown',field:n.error,item_keys:keysOf(item)};}
- return {schema:items.length?'recognized':'empty',items:items.length};
+ if(!r.ok)return {schema:'ledger_unavailable',cli:r.code};
+ if(!Array.isArray(r.data?.items))return {schema:'unparseable',item_keys:keysOf(r.data)};
+ const rows=rowsOf(r.data.items,o['--pay-to']);
+ if(rows.match)return {schema:'unparseable',field:rows.field,item_keys:rows.item_keys};
+ return {schema:rows.rows.length?'recognized':'empty',items:rows.rows.length};
  }
  if(args[0]==='--live'){
- if(args.length!==3&&args.length!==5||args[1]!=='--booking-file'||args.length===5&&args[3]!=='--evidence-out')return {match:'invalid_arguments'};
- let booking;try{booking=await loadBooking(args[2]);}catch{return {match:'invalid_input'};}
- const live=await readLive(booking,{run});
+ const o=options(args.slice(1),['--booking-file','--last','--evidence-out']);
+ const last=o?.['--last']===undefined?100:Number(o['--last']);
+ if(!o||!o['--booking-file']||!Number.isSafeInteger(last)||last<1||last>100)return {match:'invalid_arguments'};
+ let booking;try{booking=await loadBooking(o['--booking-file']);}catch{return {match:'invalid_input'};}
+ const live=await readLive(booking,{run,last});
  if(live.match)return live;
- const result=matchRows(booking,live.rows);
- if(result.match==='unique'&&args[4]){try{await write(args[4],JSON.stringify(result.evidence)+'\n');}catch{return {match:'evidence_write_failed'};}}
- return {...result,pages:live.pages};
+ const {evidence,...result}=matchLive(booking,live.payload);
+ if(result.match==='unique'&&o['--evidence-out']){try{await write(o['--evidence-out'],JSON.stringify(evidence)+'\n');}catch{return {match:'evidence_write_failed'};}}
+ return {...result,...(evidence?{evidence}:{}),pages:live.pages};
  }
  return {match:'invalid_arguments'};
 }
-if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){const result=await main(process.argv.slice(2));console.log(JSON.stringify(result));if(result.match!=='unique'&&result.schema!=='recognized'&&result.schema!=='empty')process.exitCode=1;}
+if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
+ const result=await main(process.argv.slice(2));console.log(JSON.stringify(result));
+ if(!['unique','none'].includes(result.match)&&!['recognized','empty'].includes(result.schema))process.exitCode=1;
+}

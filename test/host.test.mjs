@@ -43,3 +43,25 @@ test('bounded SSE reads first event only, handles split UTF8 and multiline data,
  const first=await probeBody(new Response('data: {}\n\n'+'x'.repeat(20000)),true,new AbortController().signal);assert.equal(first.body,'{}');
  const abort=new AbortController();const pending=probeBody(new Response(new ReadableStream({pull(){}})),true,abort.signal);abort.abort();await assert.rejects(pending);
 });
+
+test('host help works without credentials and live ledger refuses unknown transfer shapes',async()=>{
+ const {matchLive}=await import('../scripts/ledger-match.mjs');
+ assert.equal((await main([],{})).ok,true);assert.equal((await main(['help'],{})).ok,true);
+ assert.equal(matchLive({}, {items:[],next_cursor:null,has_more:false}).match,'none');
+ assert.equal(matchLive({}, {items:[{amount:5}],next_cursor:null,has_more:false}).match,'unparseable');
+ assert.equal(matchLive({}, {items:[],next_cursor:'txn_next',has_more:true}).match,'unparseable');
+});
+test('purchase planning enforces authorization, per-service/total limits, reserves and uncertain results',async()=>{
+ const {purchasePlan,main:purchaseMain}=await import('../scripts/purchase.mjs');
+ const f={authorization:{purchases_enabled:true,budget:90,expires_at:'2099-01-01T00:00:00Z'},request:{subject_id:'fixture',url:'https://public.example/data',amount:5,payee:'p_0123456789'},target:{url:'https://public.example/data',state:'active'},balance:100,unsettled_orders:2,events:[]};
+ assert.equal(purchasePlan(f).ok,true);
+ assert.equal(purchasePlan({...f,authorization:{...f.authorization,purchases_enabled:false}}).error.code,'purchase_not_authorized');
+ assert.equal(purchasePlan({...f,request:{...f.request,amount:16}}).error.code,'single_purchase_limit');
+ assert.equal(purchasePlan({...f,authorization:{...f.authorization,budget:4}}).error.code,'total_budget_limit');
+ assert.equal(purchasePlan({...f,balance:24}).error.code,'reserve_violation');
+ const e={operation_id:'a',state:'completed',amount:15,url:f.request.url,transaction_id:'txn_a'};
+ assert.equal(purchasePlan({...f,events:[e]}).error.code,'service_purchase_limit');
+ assert.equal(purchasePlan({...f,events:[{...e,state:'unknown'}]}).error.code,'unresolved_transfer');
+ assert.equal(purchasePlan({...f,events:[e,{...e,operation_id:'b'}]}).error.code,'duplicate_transaction');
+ assert.equal((await purchaseMain(['--execute'])).error.code,'live_transactions_disabled');
+});

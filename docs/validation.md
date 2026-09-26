@@ -69,3 +69,12 @@
 - 首次自身探测返回404；启用 global_fetch_strictly_public 后通过。采用 [Cloudflare 官方公网 Worker 间 fetch 支持](https://developers.cloudflare.com/workers/runtime-apis/fetch/)，没有增加私网/服务绑定。
 - ledger-match只完成规范化fixture匹配逻辑和歧义/金额/去重测试；真实ledger登录恢复和实际字段适配仍待办。不能将fixture_evidence当作真实支付凭证。
 - host/与其他人未跟踪文档保留；主播CLI独立说明见host-cli.md。
+
+## 2026-09-26 最小自费测评与远端更新合并
+
+- 快进合入 ed44c38，保留负责人 host/ 与 .gitignore 未提交修改。未付款预约上限2/30纳入本轮回归。
+- typecheck、35项测试全部通过。新增host_purchased缺证据400、非法付款方/超额拒绝、原始采购证据不公开、幂等重试及付款/采购共享交易ID防重用；CLI帮助、采购dry-run拒绝场景通过。
+- 0008远端迁移完成；Worker 97ac20e5-c22e-4d00-8cde-9a3831792f97。线上只读admin=401/200/reviews200、MCP初始化/四工具发现/list_reviews通过。
+- WSL真实只读ledger已成功，0条记录，match=none。非空交易字段映射仍未核实，返回unparseable。真实采购、付款、退款均未执行。
+- purchase.mjs仅fixture dry-run预算规划，不具备生产转账执行、持久锁/追加支出日志；启用前仍需实现和核验，不能用于无人值守花费。
+- 第二轮彩排未由本轮重跑或验收；supervise的原子锁/截止终止问题已反馈产品负责人。

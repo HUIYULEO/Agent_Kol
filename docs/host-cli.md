@@ -28,15 +28,25 @@ approve-target 两个确认标志均必填，仅允许已经由主播审核的�
 ## ledger-match
 
 ```sh
-node scripts/ledger-match.mjs --live --booking-file booking.json [--evidence-out evidence.json]
+node scripts/ledger-match.mjs --live --booking-file booking.json [--last N] [--evidence-out evidence.json]
 node scripts/ledger-match.mjs --check --pay-to p_PAYTO
 node scripts/ledger-match.mjs --fixture --booking-file booking.json --ledger-file ledger.json
 ```
 
---live 调用本机 `sharednet --json ledger --last 100`，按 next_cursor 用 --before 翻页，直到遇到早于预约 created_at 的转账或 has_more=false；最多10页，超过返回 ledger_incomplete，不猜测。booking 文件可以是预约对象，也可以直接是 `host.mjs booking` 的输出。只有 match=unique 时才写 --evidence-out，文件正好是 mark-paid 接受的 ledger_attested 七个字段，没有 simulation_only。其余结果：none、multiple、amount_mismatch、invalid_input、schema_unknown、ledger_unavailable、ledger_incomplete。退出码只在 unique 时为0。
+--live 通过固定的 `npx -y sharednet@0.1.8 --json ledger --last N`（默认100）只读读取 ledger。Windows 原生无法保存凭据，因此经 `wsl.exe -d Ubuntu-20.04` 和已安装 Node22.23.3 的绝对路径运行；迁移机器时应调整该路径。按 next_cursor 用 --before 翻页，直到遇到早于预约 created_at 的转账或 has_more=false；最多10页，超过返回 unparseable/ledger_incomplete，不猜测。booking 文件可以是预约对象，也可以直接是 `host.mjs booking` 的输出。只有 match=unique 时才写 --evidence-out，文件正好是 mark-paid 接受的 ledger_attested 七个字段，没有 simulation_only。结果：unique、none、multiple、amount_mismatch、invalid_input、unparseable（附 reason）。退出码在 unique 和 none 时为0。
 
-CLI 0.1.8 实测：全局 --json 只把默认的缩进 JSON 变为单行，两者都是 JSON；ledger 返回 `{items,next_cursor,has_more}`；交易 ID 形如 txn_ 加10位字母数字。开发期账本为空，**单条转账的字段名尚未见过**。适配器只在每个字段恰好命中一个已知名称时读取（交易ID：id/transfer_id/transaction_id；金额：amount/credits；付款方：from/from_principal_id/from_id/sender/payer；收款方：to/to_principal_id/to_id/recipient/payee；memo：memo/note，可缺省；时间：created_at/timestamp/occurred_at/at）；付款方和收款方可以是字符串、null 或含 id/principal_id 的对象。任何一条不符合都返回 schema_unknown 及该条的字段名（不含值），整次核验失败，因此字段猜错只会导致无法收款，不会错收。收入须为正整数；支出允许带符号。原生 Windows 直接返回 run_in_wsl。
+CLI 0.1.8 实测：全局 --json 只把默认的缩进 JSON 变为单行，两者都是 JSON；ledger 返回 `{items,next_cursor,has_more}`；交易 ID 形如 txn_ 加10位字母数字；WSL 登录可用、空账本返回 none。官方 API 文档与 /api/v1/openapi.json 只列出 CreditTransfer 名称、未定义字段，开发期账本为空，**单条转账的字段名尚未见过**。适配器只在每个字段恰好命中一个已知名称时读取（交易ID：id/transfer_id/transaction_id；金额：amount/credits；付款方：from/from_principal_id/from_id/sender/payer；收款方：to/to_principal_id/to_id/recipient/payee；memo：memo/note，可缺省；时间：created_at/timestamp/occurred_at/at）；付款方和收款方可以是字符串、null 或含 id/principal_id 的对象。任何一条不符合都返回 unparseable、reason=credit_transfer_fields_unverified 及该条的字段名（不含值），整次核验失败，因此字段猜错只会导致无法收款，不会错收。收入须为正整数；支出允许带符号。真实积分到账后，以 --check 结果确认或补映射。
 
---check 读取最近20条，只报告 empty、recognized 或 schema_unknown，不做匹配。
+--check 读取最近20条，只报告 empty、recognized 或 unparseable，不做匹配。
 
---fixture 是规范化演练匹配器，返回 simulation_only=true，唯一结果放在 fixture_evidence，不能交给 mark-paid。
+--fixture 是规范化演练匹配器，返回 simulation_only=true，唯一结果放在 fixture_evidence，不能交给 mark-paid。正式查账应使用权威逐笔 ledger，不取账户总额差值。
+
+## 最小 MVP 更新（2026-09-26）
+
+host.mjs 无参数、help、--help、-h 均可在不读取管理员令牌的情况下输出一行 JSON 用法。
+
+host_purchased 发布通路已支持 purchase_evidence：transaction_id、payer、payee、amount、memo、observed_at。payer 必须为配置的主播 principal，payee 为另一个 principal，amount为1–15整数，memo为 purchase:subject_id。公开仅展示 purchase_amount 与 agent_attested，不公开原始采购账本字段。交易 ID 与 seller_paid 的付款/退款共用唯一引用表；同一 subject 的同内容重试幂等。此接口登记主播的查账声明，不会发起付款，也不等于 Worker 独立查账。
+
+purchase.mjs --dry-run --fixture-file scenario.json 仅验证采购计划，无实际付款通道。夹具包含 authorization{purchases_enabled,budget,expires_at}、request{subject_id,url,amount,payee?}、target{url,state,seller_principal?}、balance、unsettled_orders、events。上限：单笔/同URL累计15、总预算最多90、保留10+未结订单数×5；未知/pending结果、重复交易拒绝。events为每个operation当前状态的测试输入，不是已实现的持久支出账本。真实启动授权文件读取、原子锁、追加支出日志及实际pay仍留到后续启用阶段；不宣称该dry-run已经可用于无人值守转账。自动退款不在当前MVP。
+
+测评优先发现亮点，尽量给有依据的推荐；不编造、不隐瞒关键失败，付费不直接决定结论。

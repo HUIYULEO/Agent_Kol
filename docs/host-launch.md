@@ -6,7 +6,7 @@
 
 1. 线上健康:`/health`、`/` 返回 200;`node scripts/verify-mcp.mjs` 通过(`GET /mcp` 返回 405 是设计行为,不算故障);`node scripts/host.mjs stats` 返回 JSON(待 Codex 交付 host.mjs)
 2. 生产凭据文件放在仓库和工作目录之外,通过环境变量 `ADMIN_TOKEN_FILE` 传给 host.mjs;`host/.claude/settings.json` 对该路径设置 Read deny,彩排中实测被拒
-3. ledger:主播会话必须在 WSL 内启动(原生 Windows 的 CLI 凭据存储报 unsafe_credential_storage)。WSL 内 `sharednet ledger --last 3` 返回 JSON,且 `node scripts/ledger-match.mjs --check --pay-to p_umBqZvkim8` 返回 schema 为 empty 或 recognized。不可用则 Arena 2 按剧本只接预约、不开付款窗口
+3. ledger:`node scripts/ledger-match.mjs --check --pay-to p_umBqZvkim8` 返回 schema 为 empty 或 recognized(Windows 上脚本经 wsl.exe 调用 WSL 内的 CLI,原生 Windows 的凭据存储不可用)。不可用则 Arena 2 按剧本只接预约、不开付款窗口
 4. Arena 1 与 Arena 2 在不同房间。拿到两个房间 ID(或 Arena 2 的加入方式),确认 SharedNet MCP 已加入 Arena 1 房间;若 Arena 2 房间 20:00 前已知,也提前加入
 5. 在启动指令中填写授权项(下文 `{…}`),未授权的一律视为禁止
 6. 本机保持唤醒、联网、不合盖

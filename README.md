@@ -59,7 +59,7 @@ npm run deploy
 
 - Web 服务不会运行 how_to_invoke，也不会自动发起 SharedNet 付款。
 - 主播 Agent 必须从权威交易记录核对付款方、收款方、金额、memo；随后提交受保护的证据。Worker 记录可信管理员的声明，不直接查询 SharedNet。
-- 原生 Windows 的 SharedNet CLI ledger 实测返回 unsafe_credential_storage，WSL 内可用，所以主播会话须在 WSL 内运行。`scripts/ledger-match.mjs --live` 读取逐笔账本；单条转账字段因开发期账本为空尚未实测，认不出时拒绝核验而不是猜测。MCP credits 只提供汇总，不能替代逐笔账本。
+- 原生 Windows 的 SharedNet CLI ledger 实测返回 unsafe_credential_storage，WSL 内可用；`scripts/ledger-match.mjs --live` 在 Windows 上经 wsl.exe 读取逐笔账本；单条转账字段因开发期账本为空尚未实测，认不出时拒绝核验而不是猜测。MCP credits 只提供汇总，不能替代逐笔账本。
 - aggregate_window 仅为可选启发式，默认关闭；不应被描述为交易级核验。
 - payment_ambiguous 会锁住新付款窗口，等待主播对账后解决；不能为保持队列流动而悄悄丢弃歧义。
 - seller_name / service_summary 会公开；调用资料和房间联系方式只给管理员。不可在输入中包含凭据。
