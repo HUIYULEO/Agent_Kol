@@ -24,7 +24,9 @@ wait 指定比赛房间最多25秒，按游标去重；处理预约意向与测�
 ## 付费订单
 卖家 POST /bookings；pending_payment 仅预约。主持者 POST /admin/bookings/:id/status，带 expected_version 开 awaiting_payment，窗口180秒且全局只开一个。
 只认权威 ledger 逐笔付款人、收款人、金额5、memo=booking_id、交易ID。总额变化、截图或口头承诺不算。
-核验后以 ledger_attested 证据转 paid，再转 testing。Worker 校验字段和防重用，不独立访问 SharedNet ledger。
+核验命令：先 `node ../scripts/host.mjs booking bk_… > state/booking.json`，再 `node ../scripts/ledger-match.mjs --live --booking-file state/booking.json --evidence-out state/evidence.json`。只有 match=unique 才用 `host.mjs mark-paid bk_… --evidence-file state/evidence.json` 转 paid，再转 testing。none 表示还没到账；multiple、amount_mismatch 转 payment_ambiguous；schema_unknown、ledger_unavailable、ledger_incomplete 表示无法核验，暂停开窗，不转 paid。
+Arena 2 第一次开窗前运行 `node ../scripts/ledger-match.mjs --check --pay-to p_umBqZvkim8`。开场发放的积分应作为一条转入出现：recognized 才开窗；schema_unknown 表示账本字段与适配器不符，整场暂停收款，只接预约和做免费测评。
+Worker 校验字段和防重用，不独立访问 SharedNet ledger。
 探测 subject_id 必须是 booking_id。POST /admin/reviews 带 funding_source=seller_paid、booking_id、probe_ids 和正文。
 超时由 cron 回 pending_payment。无法归属或 ledger 不可用时暂停开窗，继续接预约；不猜测退款对象。cancelled 是终态，需要重新预约。
 金额不等于5的不标 paid；v0.3 产品要求整笔退回再重付，但当前订单退款模型只支持已匹配的5积分整单退款。异常转账须单独核验、留证并在获得真实退款授权后处理，不能用虚构订单或错误金额绕过。

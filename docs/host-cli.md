@@ -25,10 +25,18 @@ approve-target 两个确认标志均必填，仅允许已经由主播审核的�
 
 --accept-mcp 固定 Accept: application/json, text/event-stream；不允许任意头或 Session ID。支持单次无状态 JSON-RPC，最多5秒、16KiB、每 subject 5次；SSE只读取首个含 data 的事件并取消余下流。tools/list 响应证据标记 response_projection=tools_list_summary，仅摘录工具 name/description；不将 schema 截断误当作完整响应。所有片段仍脱敏，最多2048字符，超过时 truncated=true。没有完整会话/认证/长流支持。
 
-## ledger-match 演练边界
+## ledger-match
 
+```sh
+node scripts/ledger-match.mjs --live --booking-file booking.json [--evidence-out evidence.json]
+node scripts/ledger-match.mjs --check --pay-to p_PAYTO
 node scripts/ledger-match.mjs --fixture --booking-file booking.json --ledger-file ledger.json
+```
 
-这是规范化 fixture 匹配器，**尚未接真实 CLI 输出**。booking 文件包含 booking_id、seller_payee_id、pay_to、price；ledger 数组的每项包含 direction(incoming/outgoing)、transaction_id、amount、payer、payee、memo、observed_at。返回 simulation_only=true，match 为 unique/none/multiple/amount_mismatch/invalid_input；唯一结果放在 fixture_evidence，不是可直接交给 mark-paid 的证据。重复交易 ID、缺失字段、非法时间拒绝，多个匹配不自动择一。
+--live 调用本机 `sharednet --json ledger --last 100`，按 next_cursor 用 --before 翻页，直到遇到早于预约 created_at 的转账或 has_more=false；最多10页，超过返回 ledger_incomplete，不猜测。booking 文件可以是预约对象，也可以直接是 `host.mjs booking` 的输出。只有 match=unique 时才写 --evidence-out，文件正好是 mark-paid 接受的 ledger_attested 七个字段，没有 simulation_only。其余结果：none、multiple、amount_mismatch、invalid_input、schema_unknown、ledger_unavailable、ledger_incomplete。退出码只在 unique 时为0。
 
-已安装 SharedNet CLI 0.1.8 的 ledger 不支持 --json。真实字段和只读调用需登录恢复后实测；当前不伪造适配器，也不重新发起登录。正式查账应使用权威逐笔 ledger，不取账户总额差值。
+CLI 0.1.8 实测：全局 --json 只把默认的缩进 JSON 变为单行，两者都是 JSON；ledger 返回 `{items,next_cursor,has_more}`；交易 ID 形如 txn_ 加10位字母数字。开发期账本为空，**单条转账的字段名尚未见过**。适配器只在每个字段恰好命中一个已知名称时读取（交易ID：id/transfer_id/transaction_id；金额：amount/credits；付款方：from/from_principal_id/from_id/sender/payer；收款方：to/to_principal_id/to_id/recipient/payee；memo：memo/note，可缺省；时间：created_at/timestamp/occurred_at/at）；付款方和收款方可以是字符串、null 或含 id/principal_id 的对象。任何一条不符合都返回 schema_unknown 及该条的字段名（不含值），整次核验失败，因此字段猜错只会导致无法收款，不会错收。收入须为正整数；支出允许带符号。原生 Windows 直接返回 run_in_wsl。
+
+--check 读取最近20条，只报告 empty、recognized 或 schema_unknown，不做匹配。
+
+--fixture 是规范化演练匹配器，返回 simulation_only=true，唯一结果放在 fixture_evidence，不能交给 mark-paid。

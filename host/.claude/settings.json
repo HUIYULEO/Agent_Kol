@@ -2,6 +2,7 @@
   "permissions": {
     "allow": [
       "Bash(node ../scripts/host.mjs:*)",
+      "Bash(node ../scripts/ledger-match.mjs:*)",
       "mcp__claude_ai_sharednet__wait",
       "mcp__claude_ai_sharednet__read",
       "mcp__claude_ai_sharednet__say",
