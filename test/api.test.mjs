@@ -7,7 +7,7 @@ let mf, db;
 const body = { seller_name: 'Test seller', seller_payee_id: 'p_test', service_summary: 'A test-only service', how_to_invoke: 'PRIVATE https://example.com', contact_room_id: 'rom_private' };
 before(async () => {
   mf = new Miniflare(convertV4MiniflareOptions({ workers: [{ name: 'api', modules: true, scriptPath: 'dist/index.js', compatibilityDate: '2026-09-25',
-    outboundService:'fixture', d1Databases: ['DB'], bindings: { PROBE_ALLOWED_URLS:'https://public.example/data,https://public.example/redirect,https://public.example/large,https://public.example/html,https://public.example/slow,https://public.example/invalid,https://public.example/nested', REVIEW_PRICE: '5', PAY_TO: 'p_test_recipient', ADMIN_TOKEN: 'test-only-admin-token-32-characters' } },{name:'fixture',modules:true,script:`export default {async fetch(request){if(new URL(request.url).hostname==='cloudflare-dns.com'){const u=new URL(request.url),name=u.searchParams.get('name');return Response.json({Status:name==='dnsfail.example'?2:0,Answer:u.searchParams.get('type')==='A'?[{type:1,data:({'private.example':'127.0.0.1','link.example':'169.254.169.254','rfc1918.example':'10.0.0.1','shared.example':'100.64.0.1'})[name]||'93.184.216.34'}]:(name==='v6private.example'?[{type:28,data:'fd00::1'}]:name==='v6mapped.example'?[{type:28,data:'::ffff:127.0.0.1'}]:[])});}const p=new URL(request.url).pathname;if(p==='/echo')return Response.json({method:request.method,body:await request.json(),leaked:request.headers.has('Authorization'),content_type:request.headers.get('Content-Type'),query:new URL(request.url).search});if(p==='/slow'){await new Promise(r=>setTimeout(r,6000));return Response.json({ok:true});}if(p==='/invalid')return new Response('not-json-secret',{headers:{'content-type':'application/json'}});if(p==='/nested')return Response.json({items:Array.from({length:100},(_,i)=>i)});if(p==='/redirect')return new Response(null,{status:302,headers:{location:'https://127.0.0.1/'}});if(p==='/html')return new Response('<script>secret</script>',{headers:{'content-type':'text/html'}});return Response.json(p==='/large'?{body:'x'.repeat(20000)}:{title:'fixture',token:'private-token',nested:{email:'alice@example.com'},message:'Bearer privatecredential',value:'normal'});}}`}] }));
+    outboundService:'fixture', d1Databases: ['DB'], bindings: { PROBE_ALLOWED_URLS:'https://public.example/data,https://public.example/redirect,https://public.example/large,https://public.example/html,https://public.example/slow,https://public.example/invalid,https://public.example/nested', REVIEW_PRICE: '5', PAY_TO: 'p_test_recipient', ADMIN_TOKEN: 'test-only-admin-token-32-characters' } },{name:'fixture',modules:true,script:`export default {async fetch(request){if(new URL(request.url).hostname==='cloudflare-dns.com'){const u=new URL(request.url),name=u.searchParams.get('name');return Response.json({Status:name==='dnsfail.example'?2:0,Answer:u.searchParams.get('type')==='A'?[{type:1,data:({'private.example':'127.0.0.1','link.example':'169.254.169.254','rfc1918.example':'10.0.0.1','shared.example':'100.64.0.1'})[name]||'93.184.216.34'}]:(name==='v6private.example'?[{type:28,data:'fd00::1'}]:name==='v6mapped.example'?[{type:28,data:'::ffff:127.0.0.1'}]:[])});}const p=new URL(request.url).pathname;if(p==='/sse')return new Response('data: '+JSON.stringify({result:{tools:[{name:'fixture_tool',description:'Fixture description',inputSchema:{}}]},accept:request.headers.get('Accept')})+'\\n\\ndata: ignored\\n\\n',{headers:{'content-type':'text/event-stream'}});if(p==='/echo')return Response.json({method:request.method,body:await request.json(),leaked:request.headers.has('Authorization'),accept:request.headers.get('Accept'),content_type:request.headers.get('Content-Type'),query:new URL(request.url).search});if(p==='/slow'){await new Promise(r=>setTimeout(r,6000));return Response.json({ok:true});}if(p==='/invalid')return new Response('not-json-secret',{headers:{'content-type':'application/json'}});if(p==='/nested')return Response.json({items:Array.from({length:100},(_,i)=>i)});if(p==='/redirect')return new Response(null,{status:302,headers:{location:'https://127.0.0.1/'}});if(p==='/html')return new Response('<script>secret</script>',{headers:{'content-type':'text/html'}});return Response.json(p==='/large'?{body:'x'.repeat(20000)}:{title:'fixture',token:'private-token',nested:{email:'alice@example.com'},message:'Bearer privatecredential',value:'normal'});}}`}] }));
   db = await mf.getD1Database('DB');
   for (const file of (await readdir('migrations')).filter(f => f.endsWith('.sql')).sort()) {
     const statements=unstable_splitSqlQuery(await readFile('migrations/'+file,'utf8'));
@@ -318,4 +318,60 @@ test('redaction preserves ordinary field names, public URL paths and business ID
  for(const key of ['token','password','api_key','email','authorization','accessToken','refresh_token','clientSecret','ip_address']){
  assert.equal((await post('/admin/probe',{subject_id:'secret-body',url,method:'POST',body:{[key]:'private'}},auth)).status,400,key);
  }
+});
+
+test('host CLI commands exercise isolated D1 including provenance, revocation and evidence',async()=>{
+ const {runHost}=await import('../scripts/host.mjs');
+ const token='test-only-admin-token-32-characters',files={};
+ const call=(...args)=>runHost(args,{token,base:'http://localhost',send:(url,o)=>mf.dispatchFetch(url,o),load:async name=>JSON.stringify(files[name])});
+ const id=await fresh();
+ assert.equal((await call('bookings','--status','pending_payment')).ok,true);
+ assert.equal((await call('bookings','--status','nonsense')).ok,false);
+ assert.equal((await call('booking',id)).data.booking.booking_id,id);
+ assert.equal((await call('booking','bk_00000000-0000-0000-0000-000000000000')).status,404);
+ assert.equal((await call('mark-paid',id,'--evidence-file','none')).ok,false);
+ assert.equal((await call('open-window',id)).ok,true);
+ assert.equal((await call('open-window',id)).status,409);
+ files.e={...evidence(id),method:'ledger_attested'};
+ assert.equal((await call('mark-paid',id,'--evidence-file','e')).ok,true);
+ assert.equal((await call('mark-paid',id,'--evidence-file','e')).status,409);
+ assert.equal((await call('set-status',id,'testing')).ok,true);
+ assert.equal((await call('set-status',id,'testing')).status,409);
+ const url='https://cli.example/echo',approve=['approve-target','--url',url,'--source-kind','booking','--source-ref',id,'--confirm-public','--confirm-safe'];
+ assert.equal((await call(...approve)).data.provenance,'system_verified');
+ assert.equal((await call('approve-target','--url',url)).ok,false);
+ files.body={jsonrpc:'2.0',id:1,method:'tools/list'};
+ const probe=await call('probe','--subject',id,'--url',url,'--post-body-file','body','--accept-mcp');
+ assert.equal(probe.ok,true);assert.equal(JSON.parse(probe.data.response_excerpt).accept,'application/json, text/event-stream');assert.equal(probe.data.request_accept,'application/json, text/event-stream');
+ assert.ok(probe.data.reproduce_cmd.includes('Accept: application/json, text/event-stream'));
+ assert.equal((await call('probe','--subject',id,'--url','https://unapproved.example/')).ok,false);
+ files.review={booking_id:id,funding_source:'seller_paid',probe_ids:[probe.data.probe_id],verdict:'inconclusive',tested_at:new Date().toISOString(),what_we_called:'Isolated fixture',result_summary:'Fixture only',pros:[],cons:['Not a live service'],how_to_buy:'Not applicable'};
+ assert.equal((await call('publish','--file','review')).ok,true);
+ files.invalid={};assert.equal((await call('publish','--file','invalid')).ok,false);
+ assert.equal((await call('stats')).ok,true);
+ assert.equal((await call('stats','--status','bad')).ok,false);
+ const old=(await db.prepare('SELECT record FROM probes WHERE probe_id=?').bind(probe.data.probe_id).first()).record;
+ assert.equal((await call('revoke-target','--url',url,'--reason','Owner withdrew consent')).data.state,'revoked');
+ assert.equal((await call('revoke-target','--url','https://missing.example/','--reason','Missing')).status,404);
+ assert.equal((await call('probe','--subject','revoked-cli','--url',url)).error.code,'probe_revoked');
+ assert.equal((await db.prepare('SELECT record FROM probes WHERE probe_id=?').bind(probe.data.probe_id).first()).record,old);
+ assert.equal((await call(...approve)).ok,true);
+ const events=await db.prepare('SELECT action FROM probe_target_events WHERE url=? ORDER BY rowid').bind(url).all();
+ assert.deepEqual(events.results.map(e=>e.action),['approved','revoked','approved']);
+ assert.equal((await post('/admin/probe-targets/revoke',{url:'https://public.example/nested',reason:'Revoke static target'},auth)).status,200);
+ assert.equal((await post('/admin/probe',{subject_id:'static-revoked',url:'https://public.example/nested'},auth)).status,403);
+});
+
+test('MCP probe accepts only fixed negotiation and records first SSE tool summary',async()=>{
+ const url='https://runtime.example/sse';
+ const a=await post('/admin/probe-targets',{url,source_kind:'room_message',source_ref:'msg_0123456789',publicly_provided:true,reviewed_safe:true},auth);
+ assert.equal((await a.json()).provenance,'host_declared');
+ const input={url,subject_id:'mcp-sse',method:'POST',body:{jsonrpc:'2.0',id:1,method:'tools/list'}};
+ assert.equal((await post('/admin/probe',{...input,accept_mcp:'yes'},auth)).status,400);
+ assert.equal((await post('/admin/probe',{...input,headers:{Accept:'anything'}},auth)).status,400);
+ const p=await (await post('/admin/probe',{...input,accept_mcp:true},auth)).json();
+ assert.equal(p.outcome,'observed');assert.equal(p.response_projection,'tools_list_summary');
+ assert.deepEqual(JSON.parse(p.response_excerpt),{result:{tools:[{name:'fixture_tool',description:'Fixture description'}]}});
+ const unsupported=await (await post('/admin/probe',{...input,subject_id:'no-mcp-accept'},auth)).json();
+ assert.equal(unsupported.outcome,'unsupported_content');
 });

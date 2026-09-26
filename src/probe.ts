@@ -1,3 +1,4 @@
+import {probeBody} from './probe-body';
 import {HttpError,onlyKeys,text} from './http';
 import type {Env} from './types';
 
@@ -59,12 +60,26 @@ export async function approveTarget(env:Env,input:Record<string,unknown>){
  if(input.source_kind==='booking'&&!await env.DB.prepare('SELECT booking_id FROM bookings WHERE booking_id=?').bind(source).first())
  throw new HttpError(400,'invalid_source','Booking not found.');
  await checkPublicDns(url);
- const at=new Date().toISOString();
- await env.DB.prepare('INSERT INTO probe_targets(url,source_kind,source_ref,approved_at) VALUES(?,?,?,?) ON CONFLICT(url) DO UPDATE SET source_kind=excluded.source_kind,source_ref=excluded.source_ref,approved_at=excluded.approved_at').bind(url,input.source_kind,source,at).run();
- return {url,approved_at:at};
+ const at=new Date().toISOString(),provenance=input.source_kind==='booking'?'system_verified':'host_declared',event_id='pte_'+crypto.randomUUID();
+ await env.DB.batch([
+ env.DB.prepare("INSERT INTO probe_targets(url,source_kind,source_ref,approved_at,provenance,state) VALUES(?,?,?,?,?,'active') ON CONFLICT(url) DO UPDATE SET source_kind=excluded.source_kind,source_ref=excluded.source_ref,approved_at=excluded.approved_at,provenance=excluded.provenance,state='active'").bind(url,input.source_kind,source,at,provenance),
+ env.DB.prepare("DELETE FROM probe_target_blocks WHERE url=?").bind(url),
+ env.DB.prepare("INSERT INTO probe_target_events(event_id,url,action,source_kind,source_ref,provenance,reason,at) VALUES(?,?,'approved',?,?,?,'',?)").bind(event_id,url,input.source_kind,source,provenance,at)]);
+ return {url,approved_at:at,provenance,event_id};
+}
+export async function revokeTarget(env:Env,input:Record<string,unknown>){
+ onlyKeys(input,['url','reason']);const url=publicUrl(input.url),reason=redact(text(input.reason,'reason',500)),at=new Date().toISOString(),event_id='pte_'+crypto.randomUUID();
+ const row=await env.DB.prepare('SELECT source_kind,source_ref,provenance FROM probe_targets WHERE url=?').bind(url).first<{source_kind:string;source_ref:string;provenance:string}>();
+ if(!row&&!(env.PROBE_ALLOWED_URLS??'').split(',').map(s=>s.trim()).includes(url))throw new HttpError(404,'target_not_found','Target is not configured.');
+ await env.DB.batch([
+ env.DB.prepare("INSERT INTO probe_target_blocks(url,revoked_at) VALUES(?,?) ON CONFLICT(url) DO UPDATE SET revoked_at=excluded.revoked_at").bind(url,at),
+ env.DB.prepare("UPDATE probe_targets SET state='revoked' WHERE url=?").bind(url),
+ env.DB.prepare("INSERT INTO probe_target_events(event_id,url,action,source_kind,source_ref,provenance,reason,at) VALUES(?,?,'revoked',?,?,?,?,?)").bind(event_id,url,row?.source_kind??'deployment_config',row?.source_ref??'PROBE_ALLOWED_URLS',row?.provenance??'configuration',reason,at)]);
+ return {url,state:'revoked',event_id,at};
 }
 export async function allowedUrl(value:unknown,env:Env):Promise<string>{
  const url=publicUrl(value),allow=(env.PROBE_ALLOWED_URLS??'').split(',').map(s=>s.trim());
+ if(await env.DB.prepare('SELECT url FROM probe_target_blocks WHERE url=?').bind(url).first())throw new HttpError(403,'probe_revoked','Target authorization has been revoked.');
  if(!allow.includes(url)&&!await env.DB.prepare('SELECT url FROM probe_targets WHERE url=?').bind(url).first())
  throw new HttpError(403,'probe_not_allowed','Exact URL has not been approved.');
  await checkPublicDns(url);return url;
@@ -84,9 +99,11 @@ function cleanJson(value:unknown,state:{truncated:boolean},depth=0):unknown {
  return value;
 }
 const shellQuote=(s:string)=>"'"+s.replaceAll("'","'\\''")+"'";
-export interface ProbeRecord {probe_id:string;subject_id:string;method:string;url:string;request_body?:unknown;status:number|null;latency_ms:number;response_excerpt:string;at:string;outcome:string;truncated:boolean;reproduce_cmd:string;}
+export interface ProbeRecord {probe_id:string;subject_id:string;method:string;url:string;request_body?:unknown;request_accept?:string;response_projection?:string;status:number|null;latency_ms:number;response_excerpt:string;at:string;outcome:string;truncated:boolean;reproduce_cmd:string;}
 export async function runProbe(env:Env,input:Record<string,unknown>,fetcher:typeof fetch=fetch) {
- onlyKeys(input,['subject_id','url','method','body']);
+ onlyKeys(input,['subject_id','url','method','body','accept_mcp']);
+ if(input.accept_mcp!==undefined&&typeof input.accept_mcp!=='boolean')throw new HttpError(400,'invalid_accept','accept_mcp must be boolean.');
+ const accept=input.accept_mcp===true?'application/json, text/event-stream':undefined;
  const subject=text(input.subject_id,'subject_id',100);
  if(!/^[a-zA-Z0-9_-]{1,100}$/.test(subject))throw new HttpError(400,'invalid_input','Invalid subject_id.');
  const method=input.method??'GET';if(method!=='GET'&&method!=='POST')throw new HttpError(400,'invalid_method','Only GET and POST supported.');
@@ -108,29 +125,28 @@ export async function runProbe(env:Env,input:Record<string,unknown>,fetcher:type
  if(!r.meta.changes)throw new HttpError(409,'probe_limit','At most five probes per subject.');
  }catch(e){if(e instanceof HttpError)throw e;throw new HttpError(409,'probe_conflict','Probe reservation conflict. Retry.');}
  const started=Date.now(),controller=new AbortController(),timer=setTimeout(()=>controller.abort(),5000);
- let status:number|null=null,outcome='network_error',excerpt='',truncated=false;
+ let status:number|null=null,outcome='network_error',excerpt='',truncated=false,projection:string|undefined;
  try{
- const response=await fetcher(url,{method,body:requestBody,redirect:'manual',signal:controller.signal,headers:method==='POST'?{'Content-Type':'application/json'}:{}});
+ const response=await fetcher(url,{method,body:requestBody,redirect:'manual',signal:controller.signal,headers:{...(method==='POST'?{'Content-Type':'application/json'}:{}),...(accept?{Accept:accept}:{})}});
  status=response.status;
  if(status>=300&&status<400){outcome='redirect_blocked';await response.body?.cancel();}
- else if(!response.headers.get('content-type')?.toLowerCase().includes('application/json')){
+ else if(!response.headers.get('content-type')?.toLowerCase().includes('application/json')&&!(accept&&response.headers.get('content-type')?.toLowerCase().includes('text/event-stream'))){
  outcome='unsupported_content';await response.body?.cancel();
  }else{
- const reader=response.body?.getReader(),chunks:Uint8Array[]=[];let size=0;
- if(reader)try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;
- if(size>16384){truncated=true;await reader.cancel();break;}chunks.push(value);}}finally{reader.releaseLock();}
- if(truncated){outcome='response_too_large';excerpt='[Response exceeded 16 KiB; body omitted]';}
+ const data=await probeBody(response,!!accept&&!!response.headers.get('content-type')?.toLowerCase().includes('text/event-stream'),controller.signal);
+ if(data.tooLarge){truncated=true;outcome='response_too_large';excerpt='[Response exceeded 16 KiB; body omitted]';}
  else{
- const bytes=new Uint8Array(size);let offset=0;for(const c of chunks){bytes.set(c,offset);offset+=c.length;}
- try{const state={truncated:false};const safe=JSON.stringify(cleanJson(JSON.parse(new TextDecoder('utf-8',{fatal:true,ignoreBOM:false}).decode(bytes)),state));
+ try{let parsed=JSON.parse(data.body);
+ if(accept&&Array.isArray(parsed?.result?.tools)){projection='tools_list_summary';parsed={result:{tools:parsed.result.tools.map((t:{name?:unknown;description?:unknown})=>({name:t.name,description:t.description}))}};}
+ const state={truncated:false};const safe=JSON.stringify(cleanJson(parsed,state));
  truncated=state.truncated||safe.length>2048;excerpt=safe.slice(0,2048);outcome='observed';}
  catch{outcome='invalid_json';excerpt='[Invalid JSON body omitted]';}
  }
  }
  }catch{outcome=controller.signal.aborted?'timeout':'network_error';}
  finally{clearTimeout(timer);}
- const record:ProbeRecord={probe_id:id,subject_id:subject,method,url,...(requestBody?{request_body:input.body}:{}),status,latency_ms:Date.now()-started,response_excerpt:excerpt,at,outcome,truncated,
- reproduce_cmd:"curl --globoff --proto '=https' --max-time 5 --max-redirs 0 --request "+method+" "+shellQuote(url)+(requestBody?" -H 'Content-Type: application/json' --data-raw "+shellQuote(requestBody):'')};
+ const record:ProbeRecord={probe_id:id,subject_id:subject,method,url,...(accept?{request_accept:accept}:{}),...(projection?{response_projection:projection}:{}),...(requestBody?{request_body:input.body}:{}),status,latency_ms:Date.now()-started,response_excerpt:excerpt,at,outcome,truncated,
+ reproduce_cmd:"curl --globoff --proto '=https' --max-time 5 --max-redirs 0 --request "+method+" "+shellQuote(url)+(accept?' -H '+shellQuote('Accept: '+accept):'')+(requestBody?" -H 'Content-Type: application/json' --data-raw "+shellQuote(requestBody):'')};
  await env.DB.prepare("UPDATE probes SET state='complete',record=? WHERE probe_id=?").bind(JSON.stringify(record),id).run();
  return record;
 }

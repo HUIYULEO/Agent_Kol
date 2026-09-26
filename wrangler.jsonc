@@ -4,6 +4,7 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-09-25",
   // Probe security relies on workers.dev global fetch only: no origin/VPC/private-network bindings. DNS preflight alone does not prevent rebinding.
+  "compatibility_flags": ["global_fetch_strictly_public"],
   "workers_dev": true, "observability": { "enabled": true, "logs": { "enabled": true, "invocation_logs": false } }, "triggers": { "crons": ["* * * * *"] },
   "vars": {
     "PROBE_ALLOWED_URLS": "https://jsonplaceholder.typicode.com/todos/1,https://jsonplaceholder.typicode.com/posts/1", "REVIEW_PRICE": "5", "PAYMENT_WINDOW_SECONDS": "180", "ALLOW_AGGREGATE_PAYMENTS": "false",

@@ -1,5 +1,5 @@
 import {issueResponseToken,submitResponse} from './seller-response';
-import {approveTarget,runProbe} from './probe';
+import {approveTarget,revokeTarget,runProbe} from './probe';
 import { diagnostic, routeLabel } from './diagnostics';
 import { expireWindows } from './scheduled';
 import { mcp } from './mcp';
@@ -33,6 +33,7 @@ async function route(request:Request,env:Env):Promise<Response> {
   await authenticate(request,env);
   const responseToken=/^\/admin\/reviews\/(rev_[a-f0-9-]+)\/response-token$/.exec(path);
   if(responseToken&&method==='POST')return json(await issueResponseToken(env,responseToken[1]),201);
+  if(method==='POST'&&path==='/admin/probe-targets/revoke')return json(await revokeTarget(env,await readJson(request)));
   if(method==='POST'&&path==='/admin/probe-targets')return json(await approveTarget(env,await readJson(request)),201);
   if(method==='POST'&&path==='/admin/probe')return json(await runProbe(env,await readJson(request)),201);
   if(method==='GET'&&path==='/admin/bookings')return json(await adminBookings(env,url));

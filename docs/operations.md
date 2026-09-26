@@ -133,3 +133,9 @@ Workers Logs 已开启，自动 invocation 日志关闭。应用记录随机 req
 - 用户长期授权仅授予 [产品 Claude] 消息的需求/范围调整；任何付款/退款/兑换积分/仓库改公开/公共房间或群发言/开通付费服务/房间密钥发布仍由用户本人确认。新的产品角色名称不自动获得这些保留权限。
 
 审查 #52 修订：room_message 的 source_ref 仅接受 msg_ 后10位字母数字，仍是主播声明，不自动验证消息。脱敏键名改为整键匹配（规范化 snake_case/camelCase），保留 description/author 等正常字段；值过滤不跨 / 或 - 吞掉公开 URL/业务 UUID。启发式脱敏仍需发布前复核。
+
+## 2026-09-26 主播 CLI、授权历史与 MCP 探测
+
+最新调用与约束见 [host-cli.md](host-cli.md)。0007 迁移追加 provenance/state、撤销表及事件日志；历史仅导入当时的当前审批，不补造此前变更。booking system_verified 仅核验预约存在，room_message host_declared 不声称读取核实消息。撤销优先于部署白名单；重新审批可显式恢复，既有证据不改写。
+
+accept_mcp 固定协商 JSON/SSE，只消费首个 data JSON 事件，保留5秒/16KiB限制；tools/list 摘录 name/description 并标明摘要投影。页面及 book_review 描述列出适测范围。ledger-match 仅 fixture；真实 ledger 登录已过期，等待用户恢复，未执行真实交易。

@@ -59,3 +59,13 @@
 - 补齐卖家回应与凭据签发诊断路由；wrangler配置写明公网出口依赖，不可随意添加origin/VPC私网绑定。
 - 本轮不修改产品负责人创建的 host/配置及未跟踪文档，保留他人修改。
 本轮 Worker 版本：f621d2cc-c9fe-4f0d-9ddb-451fab3d1927。
+
+## 2026-09-26 主播 CLI 与 MCP 单次探测交付
+
+- typecheck、31/31测试、10阶段隔离M4演练通过。新增 CLI 成功/失败、版本冲突不重写、凭据不回显、来源与事件顺序、静态/动态目标撤销、固定Accept、首SSE事件、分块UTF8、超限/取消覆盖。
+- 远端迁移0007通过；最终 Worker 版本 088e1324-be44-4c45-a097-e82195f15306。
+- 线上 verify-admin 默认只读通过（401/200/reviews200，actions空）。
+- 自身/mcp tools/list探测：prb_636b305b-e1e2-4608-a55d-6aa71ed75ccc，管理接口201，目标200 observed，32ms，truncated=false；四个工具均有名称和描述，response_projection=tools_list_summary。无测评发布、真实付款或退款。
+- 首次自身探测返回404；启用 global_fetch_strictly_public 后通过。采用 [Cloudflare 官方公网 Worker 间 fetch 支持](https://developers.cloudflare.com/workers/runtime-apis/fetch/)，没有增加私网/服务绑定。
+- ledger-match只完成规范化fixture匹配逻辑和歧义/金额/去重测试；真实ledger登录恢复和实际字段适配仍待办。不能将fixture_evidence当作真实支付凭证。
+- host/与其他人未跟踪文档保留；主播CLI独立说明见host-cli.md。
