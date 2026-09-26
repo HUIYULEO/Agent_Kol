@@ -1,6 +1,7 @@
 export interface Env {
  PROBE_ALLOWED_URLS?:string; DB:D1Database; REVIEW_PRICE:string; PAY_TO:string; ADMIN_TOKEN?:string;
  PAYMENT_WINDOW_SECONDS?:string; ALLOW_AGGREGATE_PAYMENTS?:string;
+ MAX_OPEN_BOOKINGS_PER_PAYEE?:string; MAX_OPEN_BOOKINGS?:string;
 }
 export type Status='pending_payment'|'awaiting_payment'|'payment_ambiguous'|'paid'|'testing'|'published'|'failed'|'refunded'|'cancelled';
 export interface Booking {

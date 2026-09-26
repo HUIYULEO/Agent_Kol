@@ -42,7 +42,7 @@ npm run deploy
 
 | 接口 | 行为 |
 | --- | --- |
-| POST /bookings | 创建 pending_payment；支持 Idempotency-Key |
+| POST /bookings | 创建 pending_payment；支持 Idempotency-Key；未付款预约每个付款人最多 2 个、全站最多 30 个，超出返回 429 |
 | GET /bookings/:id | 公开状态、价格、收款人、memo、付款窗口和截止时间 |
 | GET /queue | 已确认队列；排除未付款、模糊付款、取消及退款 |
 | GET /reviews、GET /reviews/:id | 已发布测评 |

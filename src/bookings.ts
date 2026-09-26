@@ -38,21 +38,47 @@ export async function createBooking(env: Env, input: Record<string, unknown>, ke
   if (!Number.isSafeInteger(price) || price <= 0 || !/^p_[A-Za-z0-9_-]+$/.test(env.PAY_TO ?? '')) {
     throw new HttpError(503, 'not_configured', 'Payment configuration unavailable.');
   }
+  const perPayee = Number(env.MAX_OPEN_BOOKINGS_PER_PAYEE ?? '2');
+  const total = Number(env.MAX_OPEN_BOOKINGS ?? '30');
+  if (![perPayee, total].every(n => Number.isSafeInteger(n) && n > 0)) {
+    throw new HttpError(503, 'not_configured', 'Booking limits unavailable.');
+  }
   const requestHash = await hash(JSON.stringify(data));
+  // A retry of an existing key answers from that row, even when the limits are full.
+  if (key) {
+    const existing = await env.DB.prepare('SELECT * FROM bookings WHERE idempotency_key = ?').bind(key).first<Booking>();
+    if (existing) return replay(existing, requestHash);
+  }
   const id = `bk_${crypto.randomUUID()}`;
   const now = new Date().toISOString();
-  // The UNIQUE key and conflict target make concurrent retries create exactly one row.
+  // Unpaid bookings are free to create, so cap them per payee and overall. The counts and
+  // insert run as one statement; the UNIQUE key makes concurrent retries create one row.
   await env.DB.prepare(`INSERT INTO bookings
     (booking_id,seller_name,seller_payee_id,service_summary,how_to_invoke,contact_room_id,
      price,pay_to,idempotency_key,request_hash,created_at,updated_at,queue_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING`)
+    SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?
+    WHERE (SELECT COUNT(*) FROM bookings WHERE seller_payee_id = ? AND status IN (${OPEN})) < ?
+      AND (SELECT COUNT(*) FROM bookings WHERE status IN (${OPEN})) < ?
+    ON CONFLICT(idempotency_key) DO NOTHING`)
     .bind(id, data.seller_name, data.seller_payee_id, data.service_summary, data.how_to_invoke,
-      data.contact_room_id, price, env.PAY_TO, key ?? null, requestHash, now, now, now).run();
-  const row = key ? await env.DB.prepare('SELECT * FROM bookings WHERE idempotency_key = ?').bind(key).first<Booking>()
-    : await getBooking(env, id);
-  if (!row) throw new Error('Booking insert failed.');
+      data.contact_room_id, price, env.PAY_TO, key ?? null, requestHash, now, now, now,
+      data.seller_payee_id, perPayee, total).run();
+  const row = await env.DB.prepare(key ? 'SELECT * FROM bookings WHERE idempotency_key = ?' : 'SELECT * FROM bookings WHERE booking_id = ?')
+    .bind(key ?? id).first<Booking>();
+  if (row) return replay(row, requestHash, id);
+  const open = await env.DB.prepare(`SELECT COUNT(*) AS n FROM bookings WHERE seller_payee_id = ? AND status IN (${OPEN})`)
+    .bind(data.seller_payee_id).first<{ n: number }>();
+  if ((open?.n ?? 0) >= perPayee) {
+    throw new HttpError(429, 'too_many_open_bookings', `At most ${perPayee} unpaid bookings per payee. Complete or cancel one first.`);
+  }
+  throw new HttpError(429, 'booking_queue_full', 'The review queue is full. Try again later.');
+}
+
+const OPEN = "'pending_payment','awaiting_payment','payment_ambiguous'";
+
+function replay(row: Booking, requestHash: string, createdId?: string) {
   if (row.request_hash !== requestHash) throw new HttpError(409, 'idempotency_conflict', 'Key already used with a different request.');
-  return { data: publicBooking(row), created: row.booking_id === id };
+  return { data: publicBooking(row), created: row.booking_id === createdId };
 }
 
 export async function queue(env: Env, url: URL) {

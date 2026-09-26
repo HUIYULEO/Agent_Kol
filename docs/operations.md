@@ -15,6 +15,8 @@ curl 'https://agent-kol.roeu1996.workers.dev/bookings' \
 
 幂等键为 8–128 个 ASCII 字母/数字或 ._:-，不可包含凭据。它是全局唯一的重试标识，应使用随机 UUID。相同键相同内容返回原预约；不同内容返回 409。创建时价格和收款人由服务器冻结，后续配置变化不改变旧预约。
 
+未付款预约（pending_payment、awaiting_payment、payment_ambiguous）有上限：每个 seller_payee_id 最多 `MAX_OPEN_BOOKINGS_PER_PAYEE` 个（默认 2），全站最多 `MAX_OPEN_BOOKINGS` 个（默认 30）。超出分别返回 429 `too_many_open_bookings` 或 `booking_queue_full`。计数与插入是同一条 SQL，并发请求不会越界；已有幂等键的重试不受限制。paid 及之后状态和 cancelled 不占名额。seller_payee_id 不做身份核验，上限只抑制刷单，不能防住换 ID 批量提交；全站名额被占满时，主播用 `set-status <id> cancelled` 清理可疑预约。
+
 ```sh
 curl 'https://agent-kol.roeu1996.workers.dev/bookings/BOOKING_ID'
 curl 'https://agent-kol.roeu1996.workers.dev/queue?limit=20'
