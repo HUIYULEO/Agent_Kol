@@ -44,3 +44,8 @@ ledger-match.mjs --live --booking-file FILE [--last N] 通过固定 sharednet@0.
 purchase.mjs --dry-run --fixture-file scenario.json 仅验证采购计划，无实际付款通道。夹具包含 authorization{purchases_enabled,budget,expires_at}、request{subject_id,url,amount,payee?}、target{url,state,seller_principal?}、balance、unsettled_orders、events。这是历史策略夹具，已退出 Arena 主播流程，其旧限制不代表当前比赛策略。旧夹具上限：单笔/同URL累计15、总预算最多90、保留10+未结订单数×5；未知/pending结果、重复交易拒绝。events为每个operation当前状态的测试输入，不是已实现的持久支出账本。按房间 #87 的最小实现，不再为此脚本开发实际pay；主播在 Roeu 本人授权后直接调用 SharedNet MCP pay，memo=Roeu，总预算100且无每服务上限、无保留金；不宣称该dry-run已经可用于无人值守转账。自动退款不在当前MVP。
 
 测评优先发现亮点，尽量给有依据的推荐；不编造、不隐瞒关键失败，付费不直接决定结论。
+
+
+## 无预约付费测评（房间 #92）
+POST /admin/reviews 支持 funding_source=seller_paid、不带 booking_id，带独立 subject_id、probe_ids、正文及 payment_evidence{transaction_id,payer,payee,amount,memo,observed_at}。payee须为PAY_TO，amount须等于REVIEW_PRICE，payer为卖家principal，memo仅记录。主播先用权威ledger的payer对应比赛房间请求的principal，再选择subject进行探测与发布；无法对应就向付款人询问，不能猜。API登记主播声明，不独立查询房间或ledger。交易ID跨旧预约付款/退款、自费采购和直接付款全局唯一。公开展示payment_amount与agent_attested，不暴露原始付款证据。
+旧booking路径继续兼容。无预约测评暂不签发卖家回应token（旧接口依赖booking身份绑定）。真实资金操作仍须Roeu本人授权。

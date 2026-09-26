@@ -3,11 +3,11 @@ import {getBooking} from './bookings';
 import {hash,HttpError,onlyKeys,page,text,object} from './http';
 import {probeEvidence,redact} from './probe';
 import type {Env} from './types';
-interface Review {purchase_evidence:string|null;purchase_amount:number|null;review_id:string;booking_id:string|null;subject_id:string;funding_source:string;verdict:string;tested_at:string;what_we_called:string;result_summary:string;latency_ms:number|null;pros:string;cons:string;how_to_buy:string;evidence:string;reproduce_cmd:string;content_hash:string;created_at:string;}
-const columns='review_id,booking_id,subject_id,funding_source,verdict,tested_at,what_we_called,result_summary,latency_ms,pros,cons,how_to_buy,evidence,reproduce_cmd,created_at,purchase_amount';
+interface Review {payment_evidence:string|null;payment_amount:number|null;purchase_evidence:string|null;purchase_amount:number|null;review_id:string;booking_id:string|null;subject_id:string;funding_source:string;verdict:string;tested_at:string;what_we_called:string;result_summary:string;latency_ms:number|null;pros:string;cons:string;how_to_buy:string;evidence:string;reproduce_cmd:string;content_hash:string;created_at:string;}
+const columns='review_id,booking_id,subject_id,funding_source,verdict,tested_at,what_we_called,result_summary,latency_ms,pros,cons,how_to_buy,evidence,reproduce_cmd,created_at,purchase_amount,payment_amount';
 function publicReview(row:Review) {
  const {review_id,booking_id,subject_id,funding_source,verdict,tested_at,what_we_called,result_summary,latency_ms,how_to_buy,reproduce_cmd,created_at}=row;
- return {...(funding_source==='host_purchased'?{purchase_amount:row.purchase_amount,purchase_verification:'agent_attested'}:{}),review_id,booking_id,subject_id,funding_source,verdict,tested_at,what_we_called,result_summary,latency_ms,how_to_buy,reproduce_cmd,created_at,pros:JSON.parse(row.pros),cons:JSON.parse(row.cons),evidence:JSON.parse(row.evidence)};
+ return {...(funding_source==='seller_paid'&&row.payment_amount!=null?{payment_amount:row.payment_amount,payment_verification:'agent_attested'}:{}),...(funding_source==='host_purchased'?{purchase_amount:row.purchase_amount,purchase_verification:'agent_attested'}:{}),review_id,booking_id,subject_id,funding_source,verdict,tested_at,what_we_called,result_summary,latency_ms,how_to_buy,reproduce_cmd,created_at,pros:JSON.parse(row.pros),cons:JSON.parse(row.cons),evidence:JSON.parse(row.evidence)};
 }
 function list(value:unknown,field:string) {
  if(!Array.isArray(value)||value.length>10)throw new HttpError(400,'invalid_input',field+' must be an array of up to 10 strings.');
@@ -31,15 +31,26 @@ export async function reviewStats(env:Env) {
  return {total:Object.values(verdicts).reduce((a,b)=>a+b,0),verdicts,funding_sources:funding};
 }
 export async function publishReview(env:Env,input:Record<string,unknown>) {
- onlyKeys(input,['booking_id','subject_id','funding_source','probe_ids','verdict','tested_at','what_we_called','result_summary','latency_ms','pros','cons','how_to_buy','purchase_evidence']);
+ onlyKeys(input,['booking_id','subject_id','funding_source','probe_ids','verdict','tested_at','what_we_called','result_summary','latency_ms','pros','cons','how_to_buy','purchase_evidence','payment_evidence']);
  const funding=text(input.funding_source,'funding_source',32);
  if(!['seller_paid','host_initiated','demo_example','host_purchased'].includes(funding))
  throw new HttpError(400,'invalid_funding','Unsupported funding source.');
- const bookingId=funding==='seller_paid'?text(input.booking_id,'booking_id',100):null;
+ const bookingId=funding==='seller_paid'&&input.booking_id!=null?text(input.booking_id,'booking_id',100):null;
  if(!bookingId&&input.booking_id!=null)throw new HttpError(400,'invalid_input','Unpaid reviews must not use a booking.');
  const subject=bookingId??text(input.subject_id,'subject_id',100);
  if(input.subject_id!=null&&input.subject_id!==subject)throw new HttpError(400,'invalid_input','Subject must match the booking.');
  if(!/^[a-zA-Z0-9_-]{1,100}$/.test(subject))throw new HttpError(400,'invalid_input','Invalid subject_id.');
+ let payment:Record<string,unknown>|null=null;
+ if(funding==='seller_paid'&&!bookingId){
+ const v=object(input.payment_evidence);onlyKeys(v,['transaction_id','payer','payee','amount','memo','observed_at']);
+ const transaction_id=text(v.transaction_id,'transaction_id',200),payer=text(v.payer,'payer',100),payee=text(v.payee,'payee',100),observed=text(v.observed_at,'observed_at',40);
+ const price=Number(env.REVIEW_PRICE);
+ if(!Number.isSafeInteger(price)||price<1)throw new HttpError(503,'not_configured','Invalid review price.');
+ if(!/^p_[a-zA-Z0-9]{10}$/.test(payer)||payer===payee||payee!==env.PAY_TO||v.amount!==price||!Number.isFinite(Date.parse(observed))||Date.parse(observed)>Date.now()+60000)
+ throw new HttpError(400,'invalid_payment_evidence','Payment must attest the seller principal, configured recipient and review price.');
+ if(typeof v.memo!=='string'||v.memo.length>200)throw new HttpError(400,'invalid_input','memo must be a string of up to 200 characters.');
+ payment={transaction_id,payer,payee,amount:v.amount,memo:v.memo,observed_at:new Date(observed).toISOString(),verification:'agent_attested'};
+ }else if(input.payment_evidence!==undefined)throw new HttpError(400,'invalid_payment_evidence','Direct payment evidence requires seller_paid without a booking.');
  let purchase:Record<string,unknown>|null=null;
  if(funding==='host_purchased'){
  const v=object(input.purchase_evidence);onlyKeys(v,['transaction_id','payer','payee','amount','memo','observed_at']);
@@ -62,7 +73,7 @@ export async function publishReview(env:Env,input:Record<string,unknown>) {
  const evidence=await probeEvidence(env,subject,input.probe_ids);
  if(evidence.some(p=>Date.parse(p.at)>Date.parse(data.tested_at)))throw new HttpError(400,'invalid_input','tested_at must follow the probes.');
  const reproduce=evidence.map(p=>p.reproduce_cmd).join('\n');
- const contentHash=await hash(JSON.stringify({...data,evidence,reproduce_cmd:reproduce,...(purchase?{purchase_evidence:purchase}:{})}));
+ const contentHash=await hash(JSON.stringify({...data,evidence,reproduce_cmd:reproduce,...(purchase?{purchase_evidence:purchase}:{}),...(payment?{payment_evidence:payment}:{})}));
  const existing=await env.DB.prepare('SELECT * FROM reviews WHERE subject_id=?').bind(subject).first<Review>();
  if(existing){
  if(existing.content_hash!==contentHash)throw new HttpError(409,'review_exists','Published reviews are immutable.');
@@ -72,8 +83,8 @@ export async function publishReview(env:Env,input:Record<string,unknown>) {
  if(booking&&(booking.status!=='testing'||!booking.payment_reference))throw new HttpError(409,'invalid_transition','A paid testing booking is required.');
  if(booking&&Date.parse(data.tested_at)<Date.parse(booking.created_at))throw new HttpError(400,'invalid_input','tested_at cannot precede the booking.');
  const id='rev_'+crypto.randomUUID(),eventId='evt_'+crypto.randomUUID(),now=new Date().toISOString();
- const values=[id,bookingId,subject,funding,data.verdict,data.tested_at,data.what_we_called,data.result_summary,data.latency_ms as number|null,JSON.stringify(data.pros),JSON.stringify(data.cons),data.how_to_buy,JSON.stringify(evidence),reproduce,contentHash,now,purchase?JSON.stringify(purchase):null,purchase?purchase.amount as number:null];
- const insert='INSERT INTO reviews(review_id,booking_id,subject_id,funding_source,verdict,tested_at,what_we_called,result_summary,latency_ms,pros,cons,how_to_buy,evidence,reproduce_cmd,content_hash,created_at,purchase_evidence,purchase_amount) ';
+ const values=[id,bookingId,subject,funding,data.verdict,data.tested_at,data.what_we_called,data.result_summary,data.latency_ms as number|null,JSON.stringify(data.pros),JSON.stringify(data.cons),data.how_to_buy,JSON.stringify(evidence),reproduce,contentHash,now,purchase?JSON.stringify(purchase):null,purchase?purchase.amount as number:null,payment?JSON.stringify(payment):null,payment?payment.amount as number:null];
+ const insert='INSERT INTO reviews(review_id,booking_id,subject_id,funding_source,verdict,tested_at,what_we_called,result_summary,latency_ms,pros,cons,how_to_buy,evidence,reproduce_cmd,content_hash,created_at,purchase_evidence,purchase_amount,payment_evidence,payment_amount) ';
  const placeholders=values.map(()=>'?').join(',');
  if(booking){
  await env.DB.batch([
@@ -84,7 +95,7 @@ export async function publishReview(env:Env,input:Record<string,unknown>) {
   }else{
  try{await env.DB.batch([
  env.DB.prepare(insert+'VALUES('+placeholders+') ON CONFLICT(subject_id) DO NOTHING').bind(...values),
- env.DB.prepare("INSERT INTO transaction_references(transaction_id,review_id,kind,created_at) SELECT ?,?,'purchase',? WHERE ? IS NOT NULL AND EXISTS(SELECT 1 FROM reviews WHERE review_id=?)").bind(purchase?.transaction_id??null,id,now,purchase?.transaction_id??null,id)
+ env.DB.prepare("INSERT INTO transaction_references(transaction_id,review_id,kind,created_at) SELECT ?,?,?,? WHERE ? IS NOT NULL AND EXISTS(SELECT 1 FROM reviews WHERE review_id=?)").bind((purchase??payment)?.transaction_id??null,id,payment?'payment':'purchase',now,(purchase??payment)?.transaction_id??null,id)
  ]);}catch(error){if(String(error).includes('UNIQUE constraint'))throw new HttpError(409,'transaction_reused','Transaction reference is already used.');throw error;}
  }
  const stored=await env.DB.prepare('SELECT * FROM reviews WHERE subject_id=?').bind(subject).first<Review>();

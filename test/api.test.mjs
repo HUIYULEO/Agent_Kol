@@ -414,3 +414,31 @@ test('team memo does not replace identity, amount or payment window verification
  await transition(second,'awaiting_payment',{received_baseline:0});
  assert.equal((await transition(second,'paid',{payment_evidence:{...evidence(second),memo:''}})).status,200);
 });
+
+test('direct seller payment publishes without booking and preserves global transaction uniqueness',async()=>{
+ const make=async subject=>{
+  const probe=await (await post('/admin/probe',{subject_id:subject,url:'https://public.example/data'},auth)).json();
+  return {subject_id:subject,funding_source:'seller_paid',probe_ids:[probe.probe_id],verdict:'recommended',tested_at:new Date().toISOString(),what_we_called:'Direct paid fixture',result_summary:'Fixture observed',pros:[],cons:[],how_to_buy:'Fixture only'};
+ };
+ const input=await make('direct-paid');
+ const pe={transaction_id:'txn_'+crypto.randomUUID(),payer:'p_0123456789',payee:'p_test_recipient',amount:5,memo:'Buyer Team',observed_at:new Date().toISOString()};
+ assert.equal((await post('/admin/reviews',input,auth)).status,400);
+ for(const bad of [{...pe,payee:'p_wrong'},{...pe,amount:4},{...pe,payer:undefined}])
+  assert.equal((await post('/admin/reviews',{...input,payment_evidence:bad},auth)).status,400);
+ const r=await post('/admin/reviews',{...input,payment_evidence:pe},auth);
+ assert.equal(r.status,201); const v=await r.json();
+ assert.equal(v.booking_id,null);assert.equal(v.payment_amount,5);assert.equal(v.payment_verification,'agent_attested');
+ assert.equal(v.payment_evidence,undefined);
+ const published=await (await request('/reviews/'+v.review_id)).json();
+ assert.equal(published.payment_amount,5);
+ for(const privateValue of [pe.transaction_id,pe.payer,pe.memo])assert.ok(!JSON.stringify(published).includes(privateValue));
+ assert.equal((await post('/admin/reviews',{...input,payment_evidence:pe},auth)).status,200);
+ assert.equal((await post('/admin/reviews/'+v.review_id+'/response-token',{},auth)).status,409);
+ const other=await make('direct-duplicate');
+ assert.equal((await post('/admin/reviews',{...other,payment_evidence:pe},auth)).status,409);
+ assert.equal(await db.prepare("SELECT review_id FROM reviews WHERE subject_id='direct-duplicate'").first(),null);
+ const prior=await db.prepare("SELECT transaction_id FROM transaction_references WHERE kind='purchase' LIMIT 1").first();
+ assert.equal((await post('/admin/reviews',{...other,payment_evidence:{...pe,transaction_id:prior.transaction_id}},auth)).status,409);
+ const purchased={...other,funding_source:'host_purchased',purchase_evidence:{...pe,payer:'p_test_recipient',payee:'p_0123456789'}};
+ assert.equal((await post('/admin/reviews',purchased,auth)).status,409);
+});

@@ -3,7 +3,7 @@ import {redact} from './probe';
 import type {Env} from './types';
 export async function issueResponseToken(env:Env,reviewId:string) {
  const review=await env.DB.prepare("SELECT booking_id FROM reviews WHERE review_id=? AND funding_source='seller_paid'").bind(reviewId).first<{booking_id:string}>();
- if(!review)throw new HttpError(409,'seller_booking_required','A published seller-paid booking is required.');
+ if(!review?.booking_id)throw new HttpError(409,'seller_booking_required','A published seller-paid booking is required.');
  const token=crypto.randomUUID().replaceAll('-','')+crypto.randomUUID().replaceAll('-','');
  const result=await env.DB.prepare('INSERT INTO seller_responses(review_id,token_hash,issued_at) VALUES(?,?,?) ON CONFLICT(review_id) DO NOTHING').bind(reviewId,await hash(token),new Date().toISOString()).run();
  if(!result.meta.changes)throw new HttpError(409,'token_already_issued','A response credential was already issued.');
