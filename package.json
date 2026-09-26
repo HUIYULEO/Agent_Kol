@@ -10,7 +10,10 @@
     "db:remote": "wrangler d1 migrations apply DB --remote",
     "build": "wrangler deploy --dry-run --outdir dist",
     "deploy": "wrangler deploy",
-    "pretest": "npm run build", "test": "node --test test/*.test.mjs"
+    "pretest": "npm run build",
+    "test": "node --test test/*.test.mjs",
+    "prerehearse:m4": "npm run build",
+    "rehearse:m4": "node scripts/rehearse-m4.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260925.1",

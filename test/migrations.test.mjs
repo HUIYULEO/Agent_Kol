@@ -12,7 +12,12 @@ test('Wrangler-split migrations preserve existing bookings and handle comments a
   await apply(await readFile('migrations/'+files[0],'utf8'));
   await db.prepare("INSERT INTO bookings(booking_id,seller_name,seller_payee_id,service_summary,how_to_invoke,price,pay_to,request_hash,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
    .bind('bk_fixture','existing','p_seller','retain me','private',5,'p_receiver','hash','2026-09-25T00:00:00.000Z','2026-09-25T00:00:00.000Z').run();
-  for(const file of files.slice(1))await apply(await readFile('migrations/'+file,'utf8'));
+  for(const file of files.slice(1)){
+ if(file.startsWith('0004'))await db.prepare("INSERT INTO reviews(review_id,booking_id,verdict,tested_at,what_we_called,result_summary,pros,cons,how_to_buy,content_hash,created_at) VALUES('rev_legacy','bk_fixture','mixed','2026-09-25T00:00:00Z','old call','preserve review','[]','[]','legacy','original-hash','2026-09-25T00:00:00Z')").run();
+ await apply(await readFile('migrations/'+file,'utf8'));
+ }
+ const review=await db.prepare("SELECT * FROM reviews WHERE review_id='rev_legacy'").first();
+ assert.equal(review.result_summary,'preserve review');assert.equal(review.content_hash,'original-hash');assert.equal(review.funding_source,'seller_paid');assert.equal(review.evidence,'[]');assert.equal(review.subject_id,'bk_fixture');
   const row=await db.prepare('SELECT * FROM bookings WHERE booking_id=?').bind('bk_fixture').first();
   assert.equal(row.seller_name,'existing');assert.equal(row.how_to_invoke,'private');assert.equal(row.queue_at,row.created_at);assert.equal(row.version,0);
   await apply("-- leading comment\nCREATE TABLE parser_probe(value TEXT);\n-- next statement\nINSERT INTO parser_probe VALUES('quoted;semicolon');");

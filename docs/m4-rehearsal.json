@@ -1,0 +1,20 @@
+{
+  "mode": "isolated_simulation",
+  "at": "2026-09-26T00:43:14.207Z",
+  "real_payments": false,
+  "real_refunds": false,
+  "external_service_calls": false,
+  "passed": [
+    "booking",
+    "window",
+    "simulated_ledger_attestation",
+    "testing",
+    "server_probe_evidence",
+    "paid_review",
+    "seller_response",
+    "unpaid_review",
+    "redaction",
+    "statistics"
+  ],
+  "review_count": 2
+}

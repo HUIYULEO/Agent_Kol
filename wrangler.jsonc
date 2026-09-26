@@ -5,7 +5,7 @@
   "compatibility_date": "2026-09-25",
   "workers_dev": true, "observability": { "enabled": true, "logs": { "enabled": true, "invocation_logs": false } }, "triggers": { "crons": ["* * * * *"] },
   "vars": {
-    "REVIEW_PRICE": "5", "PAYMENT_WINDOW_SECONDS": "180", "ALLOW_AGGREGATE_PAYMENTS": "false",
+    "PROBE_ALLOWED_URLS": "https://jsonplaceholder.typicode.com/todos/1,https://jsonplaceholder.typicode.com/posts/1", "REVIEW_PRICE": "5", "PAYMENT_WINDOW_SECONDS": "180", "ALLOW_AGGREGATE_PAYMENTS": "false",
     "PAY_TO": "p_umBqZvkim8"
   },
   "d1_databases": [

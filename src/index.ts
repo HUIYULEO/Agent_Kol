@@ -1,10 +1,12 @@
+import {issueResponseToken,submitResponse} from './seller-response';
+import {runProbe} from './probe';
 import { diagnostic, routeLabel } from './diagnostics';
 import { expireWindows } from './scheduled';
 import { mcp } from './mcp';
 import { landing, styles, appScript } from './landing';
 import { createBooking, getBooking, publicBooking, queue } from './bookings';
 import { authenticate, adminBooking, adminBookings, changeStatus } from './admin';
-import { getReview, listReviews, publishReview } from './reviews';
+import { getReview, listReviews, publishReview, reviewStats } from './reviews';
 import { HttpError, json, readJson, secure } from './http';
 import type { Env } from './types';
 async function route(request:Request,env:Env):Promise<Response> {
@@ -21,11 +23,17 @@ async function route(request:Request,env:Env):Promise<Response> {
  const booking=/^\/bookings\/(bk_[a-f0-9-]+)$/.exec(path);
  if(method==='GET'&&booking)return json(publicBooking(await getBooking(env,booking[1])));
  if(method==='GET'&&path==='/queue')return json(await queue(env,url));
+ if(method==='GET'&&path==='/reviews/stats')return json(await reviewStats(env));
  if(method==='GET'&&path==='/reviews')return json(await listReviews(env,url));
  const review=/^\/reviews\/(rev_[a-f0-9-]+)$/.exec(path);
  if(method==='GET'&&review)return json(await getReview(env,review[1]));
+ const response=/^\/reviews\/(rev_[a-f0-9-]+)\/response$/.exec(path);
+ if(response&&method==='POST')return json(await submitResponse(env,response[1],request,await readJson(request)));
  if(path.startsWith('/admin/')){
   await authenticate(request,env);
+  const responseToken=/^\/admin\/reviews\/(rev_[a-f0-9-]+)\/response-token$/.exec(path);
+  if(responseToken&&method==='POST')return json(await issueResponseToken(env,responseToken[1]),201);
+  if(method==='POST'&&path==='/admin/probe')return json(await runProbe(env,await readJson(request)),201);
   if(method==='GET'&&path==='/admin/bookings')return json(await adminBookings(env,url));
   const admin=/^\/admin\/bookings\/(bk_[a-f0-9-]+)(\/status)?$/.exec(path);
   if(admin&&method==='GET'&&!admin[2])return json(await adminBooking(env,admin[1]));

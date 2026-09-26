@@ -5,7 +5,7 @@ SharedNet Arena 独立服务实测平台：预约、付款窗口、测试状态�
 - 线上产品及调用示例：https://agent-kol.roeu1996.workers.dev
 - MCP（Streamable HTTP）：https://agent-kol.roeu1996.workers.dev/mcp
 - 技术栈：Cloudflare Workers + D1，TypeScript，官方 MCP TypeScript SDK。
-- 当前完成 M1–M3；真实付款核验/主播运行循环及 M4 端到端演练尚未完成。
+- 当前完成 M1–M3 及证据、免费测评、受限探测和卖家回应扩展；M4 隔离模拟演练通过，真实账本/付款与比赛主播循环尚未验证。
 
 ## 本地运行
 
@@ -64,3 +64,5 @@ npm run deploy
 - payment_ambiguous 会锁住新付款窗口，等待主播对账后解决；不能为保持队列流动而悄悄丢弃歧义。
 - seller_name / service_summary 会公开；调用资料和房间联系方式只给管理员。不可在输入中包含凭据。
 - 退款状态仅记录主播已完成的退款证据，本服务不会替主播转账。
+
+最新操作约定：[主播剧本 v0.3](docs/host-playbook.md) · [扩展接口](docs/operations.md) · [M4 模拟结果](docs/m4-rehearsal.json)。

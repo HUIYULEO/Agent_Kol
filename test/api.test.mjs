@@ -7,7 +7,7 @@ let mf, db;
 const body = { seller_name: 'Test seller', seller_payee_id: 'p_test', service_summary: 'A test-only service', how_to_invoke: 'PRIVATE https://example.com', contact_room_id: 'rom_private' };
 before(async () => {
   mf = new Miniflare(convertV4MiniflareOptions({ workers: [{ name: 'api', modules: true, scriptPath: 'dist/index.js', compatibilityDate: '2026-09-25',
-    d1Databases: ['DB'], bindings: { REVIEW_PRICE: '5', PAY_TO: 'p_test_recipient', ADMIN_TOKEN: 'test-only-admin-token-32-characters' } }] }));
+    outboundService:'fixture', d1Databases: ['DB'], bindings: { PROBE_ALLOWED_URLS:'https://public.example/data,https://public.example/redirect,https://public.example/large,https://public.example/html,https://public.example/slow,https://public.example/invalid,https://public.example/nested', REVIEW_PRICE: '5', PAY_TO: 'p_test_recipient', ADMIN_TOKEN: 'test-only-admin-token-32-characters' } },{name:'fixture',modules:true,script:`export default {async fetch(request){const p=new URL(request.url).pathname;if(p==='/slow'){await new Promise(r=>setTimeout(r,6000));return Response.json({ok:true});}if(p==='/invalid')return new Response('not-json-secret',{headers:{'content-type':'application/json'}});if(p==='/nested')return Response.json({items:Array.from({length:100},(_,i)=>i)});if(p==='/redirect')return new Response(null,{status:302,headers:{location:'https://127.0.0.1/'}});if(p==='/html')return new Response('<script>secret</script>',{headers:{'content-type':'text/html'}});return Response.json(p==='/large'?{body:'x'.repeat(20000)}:{title:'fixture',token:'private-token',nested:{email:'alice@example.com'},message:'Bearer privatecredential',value:'normal'});}}`}] }));
   db = await mf.getD1Database('DB');
   for (const file of (await readdir('migrations')).filter(f => f.endsWith('.sql')).sort()) {
     const statements=unstable_splitSqlQuery(await readFile('migrations/'+file,'utf8'));
@@ -89,7 +89,8 @@ test('payment evidence match and replay protection; review publication is atomic
  assert.equal((await transition(id,'paid',{payment_evidence:{...e,amount:99}})).status,409);
  assert.equal((await transition(id,'paid',{payment_evidence:e})).status,200);
  assert.equal((await transition(id,'testing')).status,200);
- const review={booking_id:id,verdict:'mixed',tested_at:new Date().toISOString(),what_we_called:'GET https://example.com (synthetic fixture)',result_summary:'Test fixture only',latency_ms:10,pros:['Clear interface'],cons:['Not a live service test'],how_to_buy:'Synthetic only'};
+ const probe=await (await post('/admin/probe',{subject_id:id,url:'https://public.example/data'},auth)).json();
+ const review={funding_source:'seller_paid',probe_ids:[probe.probe_id],booking_id:id,verdict:'mixed',tested_at:new Date().toISOString(),what_we_called:'GET https://example.com (synthetic fixture)',result_summary:'Test fixture only',latency_ms:10,pros:['Clear interface'],cons:['Not a live service test'],how_to_buy:'Synthetic only'};
  const results=await Promise.all([1,2].map(()=>post('/admin/reviews',review,auth)));
  assert.deepEqual(results.map(r=>r.status).sort(),[200,201]);
  const published=await results[0].json();
@@ -120,7 +121,8 @@ test('refund references cannot be reused, and original payment evidence is retai
 });
 test('rejects reviews timestamped before booking',async()=>{
  const id=await fresh();await transition(id,'awaiting_payment',{received_baseline:10});await transition(id,'paid',{payment_evidence:evidence(id)});await transition(id,'testing');
- const r=await post('/admin/reviews',{booking_id:id,verdict:'mixed',tested_at:'1970-01-01T00:00:00Z',what_we_called:'test',result_summary:'test',pros:[],cons:[],how_to_buy:'test'},auth);
+ const probe=await (await post('/admin/probe',{subject_id:id,url:'https://public.example/data'},auth)).json();
+ const r=await post('/admin/reviews',{funding_source:'seller_paid',probe_ids:[probe.probe_id],booking_id:id,verdict:'mixed',tested_at:'1970-01-01T00:00:00Z',what_we_called:'test',result_summary:'test',pros:[],cons:[],how_to_buy:'test'},auth);
  assert.equal(r.status,400);assert.equal((await detail(id)).status,'testing');
 });
 test('MCP official SDK client initializes, discovers tools and calls public APIs',async()=>{
@@ -169,7 +171,7 @@ test('public reviews never expose newly added internal columns',async()=>{
  await db.exec("ALTER TABLE reviews ADD COLUMN internal_note TEXT DEFAULT 'PRIVATE';");
  const result=await (await request('/reviews')).json();
  assert.ok(result.items.length>0);
- const fields=['review_id','booking_id','verdict','tested_at','what_we_called','result_summary','latency_ms','pros','cons','how_to_buy','created_at'].sort();
+ const fields=['review_id','booking_id','verdict','tested_at','what_we_called','result_summary','latency_ms','pros','cons','how_to_buy','created_at','subject_id','funding_source','evidence','reproduce_cmd','seller_response'].sort();
  assert.deepEqual(Object.keys(result.items[0]).sort(),fields);
  const one=await (await request('/reviews/'+result.items[0].review_id)).json();
  assert.deepEqual(Object.keys(one).sort(),fields);
@@ -188,4 +190,79 @@ test('ledger evidence is named as attestation rather than independent verificati
  assert.equal((await transition(id,'paid',{payment_evidence:{...e,method:'ledger_attested'}})).status,200);
  const stored=JSON.parse((await detail(id)).payment_evidence);
  assert.equal(stored.method,'ledger_attested');assert.equal(stored.verification,'agent_attested_transaction');
+});
+
+test('unpaid evidence-backed reviews publish without creating payment records',async()=>{
+ const subject='demo_'+crypto.randomUUID();
+ const p=await post('/admin/probe',{subject_id:subject,url:'https://public.example/data'},auth);
+ assert.equal(p.status,201);const probe=await p.json();
+ assert.equal(probe.status,200);assert.equal(probe.outcome,'observed');
+ assert.ok(!JSON.stringify(probe).includes('private-token'));
+ assert.ok(!JSON.stringify(probe).includes('alice@example.com'));
+ assert.ok(!JSON.stringify(probe).includes('privatecredential'));
+ const review={subject_id:subject,funding_source:'demo_example',probe_ids:[probe.probe_id],verdict:'recommended',tested_at:new Date().toISOString(),what_we_called:'GET fixture',result_summary:'Synthetic evidence only',pros:[],cons:[],how_to_buy:'No purchase'};
+ assert.equal((await post('/admin/reviews',{...review,probe_ids:[]},auth)).status,400);
+ assert.equal((await post('/admin/reviews',{...review,subject_id:'other'},auth)).status,400);
+ assert.equal((await post('/admin/reviews',{...review,reproduce_cmd:'malicious'},auth)).status,400);
+ assert.equal((await post('/admin/reviews',{...review,funding_source:'host_purchased'},auth)).status,400);
+ const results=await Promise.all([1,2].map(()=>post('/admin/reviews',review,auth)));
+ assert.deepEqual(results.map(r=>r.status).sort(),[200,201]);
+ const published=await results[0].json();
+ assert.equal(published.booking_id,null);assert.equal(published.evidence[0].probe_id,probe.probe_id);
+ assert.equal(published.reproduce_cmd,probe.reproduce_cmd);
+ assert.equal((await post('/admin/reviews',{...review,result_summary:'edited'},auth)).status,409);
+ assert.equal((await post('/admin/probe',{subject_id:subject,url:'https://public.example/data'},auth)).status,409);
+ assert.equal(await db.prepare('SELECT booking_id FROM bookings WHERE booking_id=?').bind(subject).first(),null);
+ const stats=await (await request('/reviews/stats')).json();assert.ok(stats.funding_sources.demo_example>=1);assert.ok(stats.verdicts.recommended>=1);
+});
+test('probe denies unsafe targets and caller-controlled request settings',async()=>{
+ assert.equal((await post('/admin/probe',{subject_id:'x',url:'https://public.example/data'})).status,401);
+ for(const url of ['http://public.example/data','https://127.0.0.1/','https://[::1]/','https://2130706433/','https://user:pass@public.example/data','https://public.example/data?token=secret','https://public.example/data#x','https://public.example:444/data','https://unapproved.example/','https://public.example/data\';echo']){
+  assert.ok([400,403].includes((await post('/admin/probe',{subject_id:'x',url},auth)).status));
+ }
+ for(const extra of [{headers:{Authorization:'secret'}},{method:'POST'},{body:'secret'}]){
+  assert.equal((await post('/admin/probe',{subject_id:'x',url:'https://public.example/data',...extra},auth)).status,400);
+ }
+});
+test('probe redirects, oversized and non-JSON responses are not exposed; quota is atomic',async()=>{
+ for(const [path,outcome] of [['redirect','redirect_blocked'],['large','response_too_large'],['html','unsupported_content']]){
+  const r=await post('/admin/probe',{subject_id:'case_'+path,url:'https://public.example/'+path},auth);
+  assert.equal(r.status,201);const p=await r.json();assert.equal(p.outcome,outcome);assert.ok(p.response_excerpt.length<=2048);assert.ok(!p.response_excerpt.includes('<script>'));
+ }
+ const subject='quota_'+crypto.randomUUID();
+ const responses=await Promise.all(Array.from({length:8},()=>post('/admin/probe',{subject_id:subject,url:'https://public.example/data'},auth)));
+ assert.equal(responses.filter(r=>r.status===201).length,5);
+ assert.equal(responses.filter(r=>r.status===409).length,3);
+ assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM probes WHERE subject_id=?').bind(subject).first()).n,5);
+});
+
+test('seller response credential is scoped, private, single-use and preserves original review',async()=>{
+ const row=await db.prepare("SELECT review_id,result_summary FROM reviews WHERE funding_source='seller_paid' LIMIT 1").first();
+ const path='/admin/reviews/'+row.review_id+'/response-token';
+ assert.equal((await post(path,{})).status,401);
+ const grantResponse=await post(path,{},auth);assert.equal(grantResponse.status,201);
+ const grant=await grantResponse.json();assert.match(grant.response_token,/^[a-f0-9]{64}$/);
+ assert.equal((await post(path,{},auth)).status,409);
+ const endpoint='/reviews/'+row.review_id+'/response',credential={Authorization:'Bearer '+grant.response_token};
+ assert.equal((await post(endpoint,{response:'hello'})).status,401);
+ assert.equal((await post('/reviews/rev_00000000-0000-0000-0000-000000000000/response',{response:'hello'},credential)).status,401);
+ assert.equal((await post(endpoint,{response:'contact alice@example.com'},credential)).status,400);
+ const responses=await Promise.all(['Seller statement A','Seller statement B'].map(response=>post(endpoint,{response},credential)));
+ assert.deepEqual(responses.map(r=>r.status).sort(),[200,409]);
+ const result=await (await request('/reviews/'+row.review_id)).json();
+ assert.equal(result.result_summary,row.result_summary);assert.ok(result.seller_response.response.startsWith('Seller statement'));
+ assert.equal((await post(endpoint,{response:result.seller_response.response},credential)).status,200);
+ assert.ok(!JSON.stringify(result).includes(grant.response_token));assert.equal(result.token_hash,undefined);
+ const demo=await db.prepare("SELECT review_id FROM reviews WHERE funding_source='demo_example' LIMIT 1").first();
+ assert.equal((await post('/admin/reviews/'+demo.review_id+'/response-token',{},auth)).status,409);
+});
+
+test('probe bounds total time and omits invalid JSON; nested truncation is explicit',async()=>{
+ const started=Date.now();
+ const slow=await (await post('/admin/probe',{subject_id:'slow',url:'https://public.example/slow'},auth)).json();
+ assert.equal(slow.outcome,'timeout');assert.ok(Date.now()-started<7500);assert.equal(slow.response_excerpt,'');
+ const invalid=await (await post('/admin/probe',{subject_id:'invalid',url:'https://public.example/invalid'},auth)).json();
+ assert.equal(invalid.outcome,'invalid_json');assert.ok(!invalid.response_excerpt.includes('not-json-secret'));
+ const nested=await (await post('/admin/probe',{subject_id:'nested',url:'https://public.example/nested'},auth)).json();
+ assert.equal(nested.truncated,true);assert.equal(JSON.parse(nested.response_excerpt).items.length,40);
 });
