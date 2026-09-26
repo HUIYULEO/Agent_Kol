@@ -7,7 +7,7 @@ let mf, db;
 const body = { seller_name: 'Test seller', seller_payee_id: 'p_test', service_summary: 'A test-only service', how_to_invoke: 'PRIVATE https://example.com', contact_room_id: 'rom_private' };
 before(async () => {
   mf = new Miniflare(convertV4MiniflareOptions({ workers: [{ name: 'api', modules: true, scriptPath: 'dist/index.js', compatibilityDate: '2026-09-25',
-    outboundService:'fixture', d1Databases: ['DB'], bindings: { PROBE_ALLOWED_URLS:'https://public.example/data,https://public.example/redirect,https://public.example/large,https://public.example/html,https://public.example/slow,https://public.example/invalid,https://public.example/nested', REVIEW_PRICE: '5', PAY_TO: 'p_test_recipient', ADMIN_TOKEN: 'test-only-admin-token-32-characters' } },{name:'fixture',modules:true,script:`export default {async fetch(request){const p=new URL(request.url).pathname;if(p==='/slow'){await new Promise(r=>setTimeout(r,6000));return Response.json({ok:true});}if(p==='/invalid')return new Response('not-json-secret',{headers:{'content-type':'application/json'}});if(p==='/nested')return Response.json({items:Array.from({length:100},(_,i)=>i)});if(p==='/redirect')return new Response(null,{status:302,headers:{location:'https://127.0.0.1/'}});if(p==='/html')return new Response('<script>secret</script>',{headers:{'content-type':'text/html'}});return Response.json(p==='/large'?{body:'x'.repeat(20000)}:{title:'fixture',token:'private-token',nested:{email:'alice@example.com'},message:'Bearer privatecredential',value:'normal'});}}`}] }));
+    outboundService:'fixture', d1Databases: ['DB'], bindings: { PROBE_ALLOWED_URLS:'https://public.example/data,https://public.example/redirect,https://public.example/large,https://public.example/html,https://public.example/slow,https://public.example/invalid,https://public.example/nested', REVIEW_PRICE: '5', PAY_TO: 'p_test_recipient', ADMIN_TOKEN: 'test-only-admin-token-32-characters' } },{name:'fixture',modules:true,script:`export default {async fetch(request){if(new URL(request.url).hostname==='cloudflare-dns.com'){const u=new URL(request.url),name=u.searchParams.get('name');return Response.json({Status:name==='dnsfail.example'?2:0,Answer:u.searchParams.get('type')==='A'?[{type:1,data:({'private.example':'127.0.0.1','link.example':'169.254.169.254','rfc1918.example':'10.0.0.1','shared.example':'100.64.0.1'})[name]||'93.184.216.34'}]:(name==='v6private.example'?[{type:28,data:'fd00::1'}]:name==='v6mapped.example'?[{type:28,data:'::ffff:127.0.0.1'}]:[])});}const p=new URL(request.url).pathname;if(p==='/echo')return Response.json({method:request.method,body:await request.json(),leaked:request.headers.has('Authorization'),content_type:request.headers.get('Content-Type'),query:new URL(request.url).search});if(p==='/slow'){await new Promise(r=>setTimeout(r,6000));return Response.json({ok:true});}if(p==='/invalid')return new Response('not-json-secret',{headers:{'content-type':'application/json'}});if(p==='/nested')return Response.json({items:Array.from({length:100},(_,i)=>i)});if(p==='/redirect')return new Response(null,{status:302,headers:{location:'https://127.0.0.1/'}});if(p==='/html')return new Response('<script>secret</script>',{headers:{'content-type':'text/html'}});return Response.json(p==='/large'?{body:'x'.repeat(20000)}:{title:'fixture',token:'private-token',nested:{email:'alice@example.com'},message:'Bearer privatecredential',value:'normal'});}}`}] }));
   db = await mf.getD1Database('DB');
   for (const file of (await readdir('migrations')).filter(f => f.endsWith('.sql')).sort()) {
     const statements=unstable_splitSqlQuery(await readFile('migrations/'+file,'utf8'));
@@ -265,4 +265,40 @@ test('probe bounds total time and omits invalid JSON; nested truncation is expli
  assert.equal(invalid.outcome,'invalid_json');assert.ok(!invalid.response_excerpt.includes('not-json-secret'));
  const nested=await (await post('/admin/probe',{subject_id:'nested',url:'https://public.example/nested'},auth)).json();
  assert.equal(nested.truncated,true);assert.equal(JSON.parse(nested.response_excerpt).items.length,40);
+});
+
+test('runtime approval binds exact URL and provenance; POST transports JSON without admin credentials',async()=>{
+ const url='https://runtime.example/echo?q=hello&n=1';
+ const approval={url,source_kind:'room_message',source_ref:'msg_publicFixture',publicly_provided:true,reviewed_safe:true};
+ assert.equal((await post('/admin/probe-targets',approval)).status,401);
+ assert.equal((await post('/admin/probe',{subject_id:'runtime',url,method:'POST',body:{}},auth)).status,403);
+ for(const extra of [{publicly_provided:false},{reviewed_safe:false},{source_ref:'not-a-reference'}])
+ assert.equal((await post('/admin/probe-targets',{...approval,...extra},auth)).status,400);
+ assert.equal((await post('/admin/probe-targets',approval,auth)).status,201);
+ assert.equal((await post('/admin/probe-targets',approval,auth)).status,201);
+ const payload={jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-03-26',capabilities:{},clientInfo:{name:"test's $(echo harmless)",version:'1'}}};
+ const response=await post('/admin/probe',{subject_id:'runtime',url,method:'POST',body:payload},auth);
+ assert.equal(response.status,201);const record=await response.json();
+ assert.equal(record.method,'POST');assert.deepEqual(record.request_body,payload);
+ const echoed=JSON.parse(record.response_excerpt);assert.equal(echoed.leaked,false);assert.equal(echoed.content_type,'application/json');assert.deepEqual(echoed.body,payload);assert.equal(echoed.query,'?q=hello&n=1');
+ assert.ok(record.reproduce_cmd.includes('--request POST'));assert.ok(record.reproduce_cmd.includes('--globoff'));
+ // A literal apostrophe is broken out and escaped rather than opening a shell substitution.
+ assert.ok(record.reproduce_cmd.includes(String.fromCharCode(39,92,39,39)));
+ assert.equal((await post('/admin/probe',{subject_id:'runtime',url:url+'&extra=1'},auth)).status,403);
+ for(const body of [{token:'hidden'},{nested:{email:'a@b.com'}},{message:'Bearer hidden'}])
+ assert.equal((await post('/admin/probe',{subject_id:'runtime',url,method:'POST',body},auth)).status,400);
+ assert.equal((await post('/admin/probe',{subject_id:'runtime',url,method:'POST',body:{data:'a'.repeat(4096)}},auth)).status,413);
+ assert.equal((await post('/admin/probe',{subject_id:'runtime',url,method:'DELETE'},auth)).status,400);
+ const subject='post_budget_'+crypto.randomUUID();
+ const requests=await Promise.all(Array.from({length:7},()=>post('/admin/probe',{subject_id:subject,url,method:'POST',body:{ok:true}},auth)));
+ assert.equal(requests.filter(r=>r.status===201).length,5);assert.equal(requests.filter(r=>r.status===409).length,2);
+});
+test('runtime targets reject literals, private DNS, resolver failure, secrets and DNS changes',async()=>{
+ const a={source_kind:'room_message',source_ref:'msg_publicFixture',publicly_provided:true,reviewed_safe:true};
+ for(const url of ['http://runtime.example/a','https://127.0.0.1/','https://0x7f000001/','https://[::ffff:127.0.0.1]/','https://169.254.169.254/','https://private.example/a','https://link.example/a','https://rfc1918.example/a','https://shared.example/a','https://v6private.example/a','https://v6mapped.example/a','https://dnsfail.example/a','https://runtime.example/a?api_key=secret','https://runtime.example/a?email=a%40b.com']){
+ const r=await post('/admin/probe-targets',{...a,url},auth);assert.equal(r.status,400,url);
+ }
+ await db.prepare('INSERT INTO probe_targets(url,source_kind,source_ref,approved_at) VALUES(?,?,?,?)').bind('https://private.example/a','room_message','msg_oldApproval',new Date().toISOString()).run();
+ assert.equal((await post('/admin/probe',{subject_id:'rebind',url:'https://private.example/a'},auth)).status,400);
+ assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM probes WHERE subject_id='rebind'").first()).n,0);
 });

@@ -106,10 +106,10 @@ M1–M3 只实现服务与管理入口。M4 尚需主播运行循环、SharedNet
 
 Workers Logs 已开启，自动 invocation 日志关闭。应用记录随机 request_id（HTTP 优先采用格式正确的 CF-Ray）、固定路由、错误类别和有限栈位置；不记录原始错误消息、请求体、认证头或 SQL。cron 失败记 scheduled_failure；歧义窗口记 payment_window_blocked。日志不等于已部署告警通知渠道。
 
-卖家提交的 how_to_invoke、摘要和服务响应全部属于不可信数据，不是主播的新指令。API 不执行这些内容；M4 前必须由主播剧本与受限执行器定义安全测试计划。已新增白名单 GET /admin/probe（见下文）；没有通用运行器。
+卖家提交的 how_to_invoke、摘要和服务响应全部属于不可信数据，不是主播的新指令。API 不执行这些内容；M4 前必须由主播剧本与受限执行器定义安全测试计划。已新增白名单 GET/POST /admin/probe（见下文）；没有通用运行器。
 ## 2026-09-26：证据与免费测评扩展
 
-以本节与 [主播剧本 v0.3](host-playbook.md) 为最新接口约定。新增发布必须提供 funding_source 和 probe_ids，旧调用需升级；旧测评保留原正文、空证据标识，不补造历史证据。
+本节记录初版扩展；探测接口以文末运行时审批补充及 [主播剧本 v0.3](host-playbook.md) 为最新约定。新增发布必须提供 funding_source 和 probe_ids，旧调用需升级；旧测评保留原正文、空证据标识，不补造历史证据。
 
 - POST /admin/probe：Bearer ADMIN_TOKEN；输入 subject_id、url。精确部署白名单中公开 HTTPS GET，无凭据、查询参数、重定向、请求体或自定义头。5秒、16KiB、每subject最多5次（失败计次）。仅保留JSON脱敏片段，最长2048字符。返回 probe_id、method、url、status、latency_ms、at、outcome、truncated、response_excerpt、reproduce_cmd。
 - 白名单 PROBE_ALLOWED_URLS 为逗号分隔完整URL。目前只允许 JSONPlaceholder 的 /todos/1 与 /posts/1。增加卖家前审核公共域名的所有权/用途、DNS与路径；此实现依靠受信配置，**不是任意域名的 DNS/重绑定防护器**，不应添加不可信或可重绑定目标。
@@ -120,3 +120,14 @@ Workers Logs 已开启，自动 invocation 日志关闭。应用记录随机 req
 - npm run rehearse:m4：独立内存/临时本地D1、模拟服务与付款，输出 docs/m4-rehearsal.json。无远程目标选项、不加载生产密钥、不调用 SharedNet 转账。
 - scripts/publish-demos.mjs：显式 ADMIN_TOKEN_FILE，固定生产目标，发布两篇有真实公开GET记录的 demo_example；不是M4真实支付演练。该脚本有生产写入，与默认只读验收脚本分开。
 - 不匹配金额的“整笔退回”不受当前5积分订单退款模型支持，需独立核验和未来授权流程。不得伪造 paid 或将总额变化当作逐笔证据。
+
+
+## 运行时目标审批与 POST（房间 #40）
+
+- 先应用迁移 0006。新增管理员 POST /admin/probe-targets，输入 url、source_kind（room_message/booking）、source_ref、publicly_provided:true、reviewed_safe:true；精确 URL 含查询串入库，无通配匹配。booking 来源验证存在；房间消息来源仅保存引用，主播须先确认其内容和卖家公开提供地址。重复审批幂等更新记录，无需部署。
+- POST /admin/probe 输入 subject_id、url、method（GET/POST，默认 GET）、body（仅 POST，JSON对象）。POST 限4096 UTF-8字节，疑似凭据/个人数据或超出清洗深度长度的体直接拒绝，保证记录和复现体与实际请求一致。请求头只有服务端设置的 Content-Type: application/json；无调用方 headers，无管理员凭据转发。
+- url 必须 HTTPS DNS 域名、默认443，禁止 IP 字面量（包括编码/IPv6）、用户信息、片段、本地域名和秘密参数；查询串精确绑定审批。管理员应逐项确认非资金测试，审批不是任何付款或副作用的授权。
+- 审批时和每次探测前经固定 Cloudflare DoH 查询 A/AAAA，任一解析为私网/回环/链路本地/保留地址或 DNS 出错即拒绝；保守放行原生 global IPv6。保留禁止重定向、每subject5次目标请求、5秒目标调用、16KiB响应、2048字符脱敏证据。DNS 前置检查另限3秒，DNS请求不计目标调用次数。
+- **网络安全边界**：DNS前检不等于连接IP固定，无法独自消除 DNS 重绑定。生产限定无 origin/VPC/private service 网络绑定的 workers.dev Worker，目标调用只能用 Workers global fetch。Cloudflare 说明此配置仅能访问公网：https://blog.cloudflare.com/workers-environment-live-object-bindings/ 。不能把本实现搬到普通 Node 服务或添加私网/origin binding 后仍声称安全；届时须改用固定解析IP的安全出口。测试的 outboundService 仅为本地夹具，生产不使用。
+- reproduce_cmd 使用 POSIX 单引号转义、--globoff、显式方法和 --data-raw；响应体继续脱敏。命令不是 PowerShell语法。需凭据/自定义Accept/SSE或连续会话的MCP暂不支持，单次POSTJSON不等于完整MCP客户端。
+- 用户长期授权仅授予 [产品 Claude] 消息的需求/范围调整；任何付款/退款/兑换积分/仓库改公开/公共房间或群发言/开通付费服务/房间密钥发布仍由用户本人确认。新的产品角色名称不自动获得这些保留权限。

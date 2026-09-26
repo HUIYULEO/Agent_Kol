@@ -6,7 +6,7 @@ if(process.argv.length>2)throw Error('This rehearsal accepts no remote target or
 const token='local-rehearsal-only-not-a-live-token';
 const mf=new Miniflare(convertV4MiniflareOptions({workers:[
  {name:'api',modules:true,scriptPath:'dist/index.js',compatibilityDate:'2026-09-25',d1Databases:['DB'],outboundService:'fixture',bindings:{ADMIN_TOKEN:token,REVIEW_PRICE:'5',PAY_TO:'p_synthetic_host',PROBE_ALLOWED_URLS:'https://fixture.example/demo'}},
- {name:'fixture',modules:true,script:"export default {fetch(){return Response.json({result:'synthetic success',token:'DO_NOT_PUBLISH',email:'private@example.com'})}}"}
+ {name:'fixture',modules:true,script:"export default {fetch(request){if(new URL(request.url).hostname==='cloudflare-dns.com'){const u=new URL(request.url),name=u.searchParams.get('name');return Response.json({Status:name==='dnsfail.example'?2:0,Answer:u.searchParams.get('type')==='A'?[{type:1,data:name==='private.example'?'127.0.0.1':'93.184.216.34'}]:[]});}return Response.json({result:'synthetic success',token:'DO_NOT_PUBLISH',email:'private@example.com'})}}"}
 ]}));
 try{
  const db=await mf.getD1Database('DB');

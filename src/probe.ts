@@ -1,19 +1,73 @@
 import {HttpError,onlyKeys,text} from './http';
 import type {Env} from './types';
 
-// Exact administrator-configured public URLs. No arbitrary origins, credentials,
-// query strings, ports, fragments, redirects, headers, or request bodies.
-export function allowedUrl(value:unknown,env:Env):string {
- const raw=text(value,'url',1000);
- let u:URL;try{u=new URL(raw);}catch{throw new HttpError(400,'invalid_url','Invalid URL.');}
- if(u.protocol!=='https:'||u.username||u.password||u.port||u.search||u.hash||
- !/^[a-z0-9.-]+$/.test(u.hostname)||!u.hostname.includes('.')||
- /(^|\.)(localhost|local|internal|test|invalid)$/.test(u.hostname)||/^[\d.]+$/.test(u.hostname)||
- !/^[a-zA-Z0-9/_.~-]*$/.test(u.pathname))
- throw new HttpError(400,'unsafe_url','Only approved public HTTPS URLs are supported.');
- const allow=(env.PROBE_ALLOWED_URLS??'').split(',').map(s=>s.trim()).filter(Boolean);
- if(!allow.includes(u.href))throw new HttpError(403,'probe_not_allowed','URL is not in the deployment allowlist.');
+// Production must use Cloudflare Workers global fetch, never a private-network binding.
+// DNS preflight is defense in depth; it is not IP pinning. See operations.md.
+export function publicUrl(value:unknown):string {
+ const raw=text(value,'url',2000);let u:URL;
+ try{u=new URL(raw);}catch{throw new HttpError(400,'invalid_url','Invalid URL.');}
+ if(u.protocol!=='https:'||u.username||u.password||u.port||u.hash||
+ !/^[a-z0-9.-]+$/.test(u.hostname)||!u.hostname.includes('.')||u.hostname.endsWith('.')||
+ u.hostname.split('.').some(x=>!x||x.startsWith('-')||x.endsWith('-'))||
+ /(^|\.)(localhost|local|internal|test|invalid|home|lan|onion)$/.test(u.hostname)||
+ /^[\d.]+$/.test(u.hostname)||u.hostname==='metadata.google.internal'||
+ /[\x00-\x20\x7f\\]/.test(raw))
+ throw new HttpError(400,'unsafe_url','Only public HTTPS DNS names on port 443 are supported.');
+ if(redact(decodeURIComponentSafe(u.pathname))!==decodeURIComponentSafe(u.pathname)||
+ Array.from(u.searchParams).some(([k,v])=>sensitiveKey(k)||redact(v)!==v))
+ throw new HttpError(400,'sensitive_url','Do not include credentials or personal details in URLs.');
  return u.href;
+}
+function decodeURIComponentSafe(s:string){try{return decodeURIComponent(s);}catch{return s;}}
+const sensitiveKey=(s:string)=>/token|secret|password|auth|cookie|api.?key|email|signature|credential/i.test(s);
+export function publicAddress(ip:string):boolean {
+ if(/^\d+\.\d+\.\d+\.\d+$/.test(ip)){
+ const n=ip.split('.').map(Number);if(n.some(v=>v>255))return false;const [a,b,c]=n;
+ return !(a===0||a===10||a===127||a>=224||a===169&&b===254||a===172&&b>=16&&b<=31||
+ a===192&&(b===168||b===0||b===2)||a===100&&b>=64&&b<=127||a===198&&(b===18||b===19||b===51&&c===100)||a===203&&b===0&&c===113);
+ }
+ // Conservatively admit native global IPv6 only; exclude transition/documentation ranges.
+ if(!/^[0-9a-f:]+$/i.test(ip))return false;
+ try{new URL('https://['+ip+']/');}catch{return false;}
+ const words=ip.toLowerCase().split(':');const first=parseInt(words[0],16),second=parseInt(words[1]||'0',16);
+ return first>=0x2000&&first<=0x3fff&&first!==0x2002&&first!==0x3fff&&
+ !(first===0x2001&&(second<0x200||second===0xdb8));
+}
+export async function checkPublicDns(url:string,fetcher:typeof fetch=fetch){
+ const host=new URL(url).hostname;
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),3000);
+ try{
+ const results=await Promise.all(['A','AAAA'].map(async type=>{
+ const r=await fetcher('https://cloudflare-dns.com/dns-query?name='+encodeURIComponent(host)+'&type='+type,{headers:{Accept:'application/dns-json'},redirect:'manual',signal:controller.signal});
+ if(r.status!==200)throw Error();
+ const data=await r.json() as {Status:number;Answer?:{type:number;data:string}[]};
+ if(data.Status!==0)throw Error();
+ return (data.Answer??[]).filter(a=>a.type===1||a.type===28).map(a=>a.data);
+ }));
+ const ips=results.flat();if(!ips.length||ips.some(ip=>!publicAddress(ip)))throw Error();
+ }catch{throw new HttpError(400,'unsafe_dns','Target must resolve exclusively to public addresses.');}
+ finally{clearTimeout(timer);}
+}
+export async function approveTarget(env:Env,input:Record<string,unknown>){
+ onlyKeys(input,['url','source_kind','source_ref','publicly_provided','reviewed_safe']);
+ const url=publicUrl(input.url);
+ if(!['room_message','booking'].includes(String(input.source_kind))||input.publicly_provided!==true||input.reviewed_safe!==true)
+ throw new HttpError(400,'review_required','Confirm a publicly supplied seller URL and a safe nonfinancial test.');
+ const source=text(input.source_ref,'source_ref',100);
+ if(!(input.source_kind==='room_message'?/^msg_[a-zA-Z0-9]+$/:/^bk_[a-f0-9-]+$/).test(source))
+ throw new HttpError(400,'invalid_source','Use a message or booking ID as provenance.');
+ if(input.source_kind==='booking'&&!await env.DB.prepare('SELECT booking_id FROM bookings WHERE booking_id=?').bind(source).first())
+ throw new HttpError(400,'invalid_source','Booking not found.');
+ await checkPublicDns(url);
+ const at=new Date().toISOString();
+ await env.DB.prepare('INSERT INTO probe_targets(url,source_kind,source_ref,approved_at) VALUES(?,?,?,?) ON CONFLICT(url) DO UPDATE SET source_kind=excluded.source_kind,source_ref=excluded.source_ref,approved_at=excluded.approved_at').bind(url,input.source_kind,source,at).run();
+ return {url,approved_at:at};
+}
+export async function allowedUrl(value:unknown,env:Env):Promise<string>{
+ const url=publicUrl(value),allow=(env.PROBE_ALLOWED_URLS??'').split(',').map(s=>s.trim());
+ if(!allow.includes(url)&&!await env.DB.prepare('SELECT url FROM probe_targets WHERE url=?').bind(url).first())
+ throw new HttpError(403,'probe_not_allowed','Exact URL has not been approved.');
+ await checkPublicDns(url);return url;
 }
 export function redact(value:string):string {
  return value.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi,'[REDACTED_EMAIL]')
@@ -29,12 +83,23 @@ function cleanJson(value:unknown,state:{truncated:boolean},depth=0):unknown {
  redact(k),/token|secret|password|auth|cookie|key|email|address|phone|ip/i.test(k)?'[REDACTED]':cleanJson(v,state,depth+1)]));}
  return value;
 }
-export interface ProbeRecord {probe_id:string;subject_id:string;method:string;url:string;status:number|null;latency_ms:number;response_excerpt:string;at:string;outcome:string;truncated:boolean;reproduce_cmd:string;}
+const shellQuote=(s:string)=>"'"+s.replaceAll("'","'\\''")+"'";
+export interface ProbeRecord {probe_id:string;subject_id:string;method:string;url:string;request_body?:unknown;status:number|null;latency_ms:number;response_excerpt:string;at:string;outcome:string;truncated:boolean;reproduce_cmd:string;}
 export async function runProbe(env:Env,input:Record<string,unknown>,fetcher:typeof fetch=fetch) {
- onlyKeys(input,['subject_id','url']);
+ onlyKeys(input,['subject_id','url','method','body']);
  const subject=text(input.subject_id,'subject_id',100);
  if(!/^[a-zA-Z0-9_-]{1,100}$/.test(subject))throw new HttpError(400,'invalid_input','Invalid subject_id.');
- const url=allowedUrl(input.url,env),id='prb_'+crypto.randomUUID(),at=new Date().toISOString();
+ const method=input.method??'GET';if(method!=='GET'&&method!=='POST')throw new HttpError(400,'invalid_method','Only GET and POST supported.');
+ let requestBody:string|undefined;
+ if(method==='GET'&&input.body!==undefined)throw new HttpError(400,'invalid_body','GET cannot have a body.');
+ if(method==='POST'){
+ if(!input.body||typeof input.body!=='object'||Array.isArray(input.body))throw new HttpError(400,'invalid_body','POST requires a JSON object.');
+ requestBody=JSON.stringify(input.body);
+ if(new TextEncoder().encode(requestBody).length>4096)throw new HttpError(413,'body_too_large','POST JSON exceeds 4 KiB.');
+ const state={truncated:false},clean=JSON.stringify(cleanJson(input.body,state));
+ if(clean!==requestBody||state.truncated)throw new HttpError(400,'sensitive_body','Use a small public JSON request without credentials or personal data.');
+ }
+ const url=await allowedUrl(input.url,env),id='prb_'+crypto.randomUUID(),at=new Date().toISOString();
  if(await env.DB.prepare('SELECT review_id FROM reviews WHERE subject_id=?').bind(subject).first())
  throw new HttpError(409,'review_exists','This subject is already published.');
  try{
@@ -45,7 +110,7 @@ export async function runProbe(env:Env,input:Record<string,unknown>,fetcher:type
  const started=Date.now(),controller=new AbortController(),timer=setTimeout(()=>controller.abort(),5000);
  let status:number|null=null,outcome='network_error',excerpt='',truncated=false;
  try{
- const response=await fetcher(url,{method:'GET',redirect:'manual',signal:controller.signal,headers:{Accept:'application/json'}});
+ const response=await fetcher(url,{method,body:requestBody,redirect:'manual',signal:controller.signal,headers:method==='POST'?{'Content-Type':'application/json'}:{}});
  status=response.status;
  if(status>=300&&status<400){outcome='redirect_blocked';await response.body?.cancel();}
  else if(!response.headers.get('content-type')?.toLowerCase().includes('application/json')){
@@ -64,7 +129,8 @@ export async function runProbe(env:Env,input:Record<string,unknown>,fetcher:type
  }
  }catch{outcome=controller.signal.aborted?'timeout':'network_error';}
  finally{clearTimeout(timer);}
- const record:ProbeRecord={probe_id:id,subject_id:subject,method:'GET',url,status,latency_ms:Date.now()-started,response_excerpt:excerpt,at,outcome,truncated,reproduce_cmd:"curl --proto '=https' --max-time 5 --max-redirs 0 '"+url+"'"};
+ const record:ProbeRecord={probe_id:id,subject_id:subject,method,url,...(requestBody?{request_body:input.body}:{}),status,latency_ms:Date.now()-started,response_excerpt:excerpt,at,outcome,truncated,
+ reproduce_cmd:"curl --globoff --proto '=https' --max-time 5 --max-redirs 0 --request "+method+" "+shellQuote(url)+(requestBody?" -H 'Content-Type: application/json' --data-raw "+shellQuote(requestBody):'')};
  await env.DB.prepare("UPDATE probes SET state='complete',record=? WHERE probe_id=?").bind(JSON.stringify(record),id).run();
  return record;
 }

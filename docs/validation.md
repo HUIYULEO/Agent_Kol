@@ -41,3 +41,12 @@
 - 实际采购、付款、退款和权威 ledger 联调仍未执行。探测仅限部署配置的可信公开 HTTPS GET 地址；脱敏为启发式，发布前仍须人工检查。卖家身份核验与回应凭据私下交付由主播负责。
 
 最终 Worker 版本：311b9976-f242-41cd-bcc8-a75b2bcdd605。
+
+## 2026-09-26 运行时探测目标与 POST 扩展
+
+- npm run typecheck、npm test（24/24）、npm run rehearse:m4（10阶段隔离模拟）均通过。
+- 新增覆盖：运行时审批认证与来源声明、精确查询串匹配、POST JSON实际传输与管理员认证隔离、POSIX shell单引号转义、4KiB请求体限制、秘密拒绝、POST并发5次预算；DNS拒绝回环、RFC1918、链路本地、共享地址、IPv6私网和IPv4映射、解析错误、审批后解析变更。
+- 远端迁移0006完成；Worker版本 bda3b29c-b2be-4ff8-a0b7-7291eeb6f9fb。
+- 线上白名单审批：无认证401、有认证201；POST probe=201，JSONPlaceholder /posts 返回201 observed，319ms，实际请求体匹配。官方指南明确该接口只模拟写入，不保存真实资源。未发布新测评，无真实资金动作。
+- 安全边界：DNS预检不是连接IP固定；生产仅使用无origin/VPC绑定的Cloudflare Workers global fetch。来源真实性和非资金操作仍须主播审核。需自定义Accept/SSE/会话认证的完整MCP流程不在单次POSTJSON支持范围。
+- ledger只读验证：Windows CLI0.1.8不支持 --help，源码用法 ledger --last N [--before txn]；本地安全存储拒绝win32。WSL Ubuntu原Node10不满足CLI>=22.18，用户目录安装官方SHA256核验的Node22.23.3，系统Node未替换。已启动浏览器登录，等待用户授权；尚未取得账本记录，付款人/收款人/金额/memo/交易ID/时间字段完整性不能确认。
