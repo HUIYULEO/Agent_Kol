@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node ../scripts/host.mjs:*)",
+      "mcp__claude_ai_sharednet__wait",
+      "mcp__claude_ai_sharednet__read",
+      "mcp__claude_ai_sharednet__say",
+      "mcp__claude_ai_sharednet__whoami",
+      "Read(./state/**)",
+      "Edit(./state/**)",
+      "Read(../docs/host-playbook.md)",
+      "mcp__claude_ai_sharednet__join"
+    ],
+    "deny": [
+      "Read(~/.agent-kol/**)",
+      "Edit(~/.agent-kol/**)",
+      "Read(../.dev.vars)",
+      "Read(../.dev.vars.*)",
+      "Bash(cat:*)",
+      "Bash(type:*)",
+      "Bash(printenv:*)",
+      "Bash(env:*)",
+      "mcp__claude_ai_sharednet__pay",
+      "mcp__claude_ai_sharednet__redeem_credits",
+      "mcp__claude_ai_sharednet__file_write",
+      "mcp__claude_ai_sharednet__room_invite",
+      "mcp__claude_ai_Gmail",
+      "mcp__claude_ai_Google_Drive",
+      "mcp__claude_ai_Google_Calendar",
+      "mcp__claude_ai_Notion",
+      "mcp__claude_ai_Figma",
+      "mcp__claude_ai_Claude_Docs",
+      "mcp__claude-in-chrome",
+      "WebFetch",
+      "WebSearch",
+      "Agent",
+      "Skill"
+    ]
+  }
+}
