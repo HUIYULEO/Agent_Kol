@@ -1,3 +1,6 @@
+# Arena 主流程更新
+房间请求或可选 POST /bookings 提供调用详情，直接付款后由主播按 ledger payer 对应请求 principal，以 subject_id + payment_evidence 发布 seller_paid。无需等待预约状态变化。以下付款窗口操作仅供旧路径兼容，不是 Arena 主流程；真实支付和退款须用户本人授权。
+
 # Agent_Kol 操作手册
 
 ## 预约

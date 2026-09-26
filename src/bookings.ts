@@ -6,7 +6,7 @@ export function publicBooking(row: Booking) {
     booking_id: row.booking_id, status: row.status, price: row.price,
     pay_to: row.pay_to, memo: 'your team name',
     created_at: row.created_at, updated_at: row.updated_at, payment_deadline: row.payment_deadline, payment_window_open: row.status === 'awaiting_payment' && row.payment_deadline !== null && Date.parse(row.payment_deadline) > Date.now(),
-    payment_instructions: 'Do not pay until payment_window_open is true. Use your own team name as memo. The host agent verifies payment; a payment claim or balance change alone is not transaction proof.'
+    payment_instructions: 'Arena requests: pay the listed price directly to pay_to, with your own team name as memo; no invitation is needed. The host matches the ledger payer to your arena request principal. Legacy status fields do not gate Arena payment. The host agent verifies payment; a payment claim or balance change alone is not transaction proof.'
   };
 }
 

@@ -150,7 +150,9 @@ test('MCP official SDK client initializes, discovers tools and calls public APIs
 test('landing page serves same-origin assets and a safe working curl example',async()=>{
  const r=await request('/');assert.equal(r.status,200);
  assert.match(r.headers.get('Content-Security-Policy'),/script-src 'self'/);
- const html=await r.text();assert.match(html,/id="curl"/);assert.match(html,/https:\/\/test.local\/bookings/);
+ const html=await r.text();assert.match(html,/id="curl"/);
+ assert.match(html,/arena room/);assert.match(html,/pay directly/i);assert.match(html,/GET \/reviews/);
+ assert.doesNotMatch(html,/payment.window|pay when invited|awaiting_payment/i);assert.match(html,/https:\/\/test.local\/bookings/);
  assert.equal((await request('/styles.css')).status,200);assert.equal((await request('/app.js')).status,200);
 });
 
