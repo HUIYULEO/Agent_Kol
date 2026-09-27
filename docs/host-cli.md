@@ -1,55 +1,70 @@
 # 主播 CLI
 
-从仓库根目录运行 node scripts/host.mjs；从 host/ 运行 node ../scripts/host.mjs。不改动 host/CLAUDE.md 或 host/.claude/settings.json。
+从仓库根目录运行 `node scripts/host.mjs`，从 `host/` 运行 `node ../scripts/host.mjs`。不改动 `host/CLAUDE.md` 或 `host/.claude/settings.json`。
 
-ADMIN_TOKEN_FILE 必须指向本机受保护、未纳入版本控制的文件，内容为一行 ADMIN_TOKEN=实际值。令牌不放 argv、不回显，不支持 --token。默认只连接生产 Worker；HOST_BASE_URL 只额外允许本地 HTTP 回归环境。每次输出一行 JSON；错误只含 HTTP status、固定 code 和必要的版本冲突摘要，不输出响应头或错误原文。
+`ADMIN_TOKEN_FILE` 指向本机受保护、未纳入版本控制的文件，内容一行 `ADMIN_TOKEN=实际值`。令牌不进 argv、不回显，不支持 `--token`。默认只连生产 Worker；`HOST_BASE_URL` 只额外允许本地 HTTP 回归环境。
+
+每条命令输出一行 JSON。错误只含 HTTP status、固定 code 和必要的版本冲突摘要，不输出响应头或错误原文。无参数、`help`、`--help`、`-h` 都能在不读令牌的情况下打印用法。
 
 ## 命令
 
-- bookings [--status S]
-- booking bk_UUID
-- open-window bk_UUID
-- mark-paid bk_UUID --evidence-file evidence.json
-- set-status bk_UUID testing|failed|cancelled|payment_ambiguous|pending_payment [--reason TEXT]
-- approve-target --url URL --source-kind room_message|booking --source-ref ID --confirm-public --confirm-safe
-- revoke-target --url URL --reason TEXT
-- probe --subject ID --url URL [--post-body-file request.json] [--accept-mcp]
-- publish --file review.json
-- stats
+```
+ledger [--limit 100] [--before txn_CURSOR]
+bookings [--status S]
+booking bk_UUID
+probe --subject ID --url URL [--post-body-file request.json] [--accept-mcp]
+approve-target --url URL --source-kind room_message|booking --source-ref ID --confirm-public --confirm-safe
+revoke-target --url URL --reason TEXT
+publish --file review.json
+stats
+```
 
-bookings 返回分页结果及 next_offset，默认第一页20条；更多历史可使用现有管理 API。变更状态前 CLI 自动读取 version；409 后只重新读取一次并报告 latest，绝不重试写入。open-window 的 received_baseline=0 是兼容旧 API 的占位，部署必须保持 ALLOW_AGGREGATE_PAYMENTS=false，它不是账本余额或收款证明。CLI 不包含转账/退款操作。
+兼容旧预约流程、日常不用：`open-window`、`mark-paid --evidence-file`、`set-status`。当前主流程是直接付款，不开付款窗口；`open-window` 的 `received_baseline=0` 只是旧 API 占位，部署必须保持 `ALLOW_AGGREGATE_PAYMENTS=false`，它不是余额也不是收款证明。CLI 本身不含任何转账或退款操作。
 
-mark-paid 接受真实核验后的 ledger_attested 单条证据文件：method、transaction_id、amount、payer、payee、memo、observed_at。Worker 验证字段匹配和去重，不能独立访问权威 ledger；这仍是主播查账声明。不得从总额变化推断，演练输出不可作为真实证据。实际采购、付款、退款仍须用户本人确认。
+变更状态前 CLI 自动读 `version`；遇 409 只重读一次并报告 `latest`，绝不重试写入。`bookings` 分页返回 `next_offset`，默认 20 条。
 
-approve-target 两个确认标志均必填，仅允许已经由主播审核的公开无凭据、非资金操作。booking 的 system_verified 只表示预约存在，不证明该 URL 属于卖家或已获卖家同意；room_message 的 host_declared 只验证消息 ID 形状，不读取房间核实。审批、重新审批、撤销均追加 probe_target_events；撤销会阻止部署白名单和运行时授权目标，原证据不变。显式重新审批才能恢复。
+## 逐笔账本
 
---accept-mcp 固定 Accept: application/json, text/event-stream；不允许任意头或 Session ID。支持单次无状态 JSON-RPC，最多5秒、16KiB、每 subject 5次；SSE只读取首个含 data 的事件并取消余下流。tools/list 响应证据标记 response_projection=tools_list_summary，仅摘录工具 name/description；不将 schema 截断误当作完整响应。所有片段仍脱敏，最多2048字符，超过时 truncated=true。没有完整会话/认证/长流支持。
+```
+node scripts/host.mjs ledger [--limit 100] [--before txn_CURSOR]
+```
 
-## ledger-match 演练边界
+Worker secret `SHAREDNET_API_KEY` 在后台认证固定的 `GET https://www.sharednet.ai/api/v1/credits/transfers`；`/admin/ledger` 本身需要管理员认证。不再依赖 WSL 或本地 SharedNet CLI。
 
+分页：`--before` 取上一页的 `next_cursor`，`has_more=true` 必须继续翻。拒绝跳转，10 秒总超时，256 KiB 响应上限。
+
+返回的 `items` 是**原始记录**，标记 `verification=raw_records_not_verified` —— 不能当成自动核验结果。核对逐笔的付款人、收款人、金额和交易 ID；`grant`（发放）不算付款；不用 `credits` 汇总变化替代。
+
+官方文档：https://www.sharednet.ai/api/docs#listCreditTransfers 。认证已实测返回 200，当前 `items` 为空；**非空记录的字段名仍待真实交易确认**，所以 `ledger-match.mjs` 不做字段映射，直接把原始记录交给主播判断。
+
+## probe
+
+`approve-target` 两个确认标志都必填，只允许已由主播审核的公开、无凭据、非资金操作地址。`booking` 来源的 `system_verified` 只表示预约存在，不证明该 URL 属于卖家或已获同意；`room_message` 的 `host_declared` 只校验消息 ID 形状，不读房间核实。
+
+审批、重新审批、撤销都追加 `probe_target_events`。撤销会同时阻止部署白名单与运行时授权的目标，原证据不变；只有显式重新审批才恢复。
+
+`--accept-mcp` 固定 `Accept: application/json, text/event-stream`，不允许任意头或 Session ID。单次无状态 JSON-RPC，最多 5 秒、16 KiB、每 subject 5 次；SSE 只读第一个含 `data` 的事件并取消余下流。`tools/list` 的证据标 `response_projection=tools_list_summary`，只摘录工具 `name`/`description`，不要把 schema 截断当完整响应。片段一律脱敏，最多 2048 字符，超出时 `truncated=true`。不支持完整会话、认证或长流。
+
+## publish
+
+`POST /admin/reviews` 支持四种 `funding_source`，字段要求见[主播剧本](host-playbook.md#发布测评)。
+
+- `seller_paid` 可以不带 `booking_id`，用独立 `subject_id` + `payment_evidence`。`payee` 须为 `PAY_TO`，`amount` 须等于 `REVIEW_PRICE`，`payer` 为卖家 principal，`memo` 仅记录。
+- `host_purchased` 附 `purchase_evidence`；`payer` 必须是配置的主播 principal，`payee` 是另一个 principal，`amount` 为正整数。
+- 交易 ID 跨旧预约付款、退款、自费采购与直接付款**全局唯一**。同一 subject 同内容重试幂等。
+- 公开只展示金额与 `agent_attested`，不暴露原始付款或采购字段。
+
+这些接口只登记主播的查账声明，Worker 不会代为发起付款，也不等于它独立查过账。
+
+## ledger-match
+
+```
+node scripts/ledger-match.mjs --live --booking-file booking.json [--last N]
 node scripts/ledger-match.mjs --fixture --booking-file booking.json --ledger-file ledger.json
+```
 
-这是规范化 fixture 匹配器，**尚未接真实 CLI 输出**。booking 文件包含 booking_id、seller_payee_id、pay_to、price、payment_opened_at、payment_deadline；ledger 数组的每项包含 direction(incoming/outgoing)、transaction_id、amount、payer、payee、memo、observed_at。返回 simulation_only=true，match 为 unique/none/multiple/amount_mismatch/invalid_input；唯一结果放在 fixture_evidence，不是可直接交给 mark-paid 的证据。重复交易 ID、缺失字段、非法时间拒绝，多个匹配不自动择一。
+`--live` 经 `host.mjs` 调云端 `/admin/ledger`，返回 `match=read_records` 加原始记录，由主播自己读。
 
-已安装 SharedNet CLI 0.1.8 的 ledger 不支持 --json。真实字段和只读调用需登录恢复后实测；当前不伪造适配器，也不重新发起登录。正式查账应使用权威逐笔 ledger，不取账户总额差值。
+`--fixture` 是离线规范化匹配器，仅供回归测试：booking 文件含 `booking_id`、`seller_payee_id`、`pay_to`、`price`、`payment_opened_at`、`payment_deadline`；ledger 数组每项含 `direction`、`transaction_id`、`amount`、`payer`、`payee`、`memo`、`observed_at`。返回 `simulation_only=true`，`match` 为 `unique`/`none`/`multiple`/`amount_mismatch`/`invalid_input`。重复交易 ID、缺字段、非法时间一律拒绝，多个候选不自动择一。
 
-## 最小 MVP 更新（2026-09-26）
-
-host.mjs 无参数、help、--help、-h 均可在不读取管理员令牌的情况下输出一行 JSON 用法。
-
-host_purchased 发布通路已支持 purchase_evidence：transaction_id、payer、payee、amount、memo、observed_at。payer 必须为配置的主播 principal，payee 为另一个 principal，amount为正整数，memo只记录原文、不限制内容。公开仅展示 purchase_amount 与 agent_attested，不公开原始采购账本字段。交易 ID 与 seller_paid 的付款/退款共用唯一引用表；同一 subject 的同内容重试幂等。此接口登记主播的查账声明，不会发起付款，也不等于 Worker 独立查账。
-
-ledger-match.mjs --live --booking-file FILE [--last N] 现在通过 host.mjs 调用云端 /admin/ledger，不再依赖WSL或本地SharedNet CLI。
-
-旧采购规划脚本及专属测试已按房间 #102 删除，不再作为比赛运行入口。
-
-测评优先发现亮点，尽量给有依据的推荐；不编造、不隐瞒关键失败，付费不直接决定结论。
-
-
-## 无预约付费测评（房间 #92）
-POST /admin/reviews 支持 funding_source=seller_paid、不带 booking_id，带独立 subject_id、probe_ids、正文及 payment_evidence{transaction_id,payer,payee,amount,memo,observed_at}。payee须为PAY_TO，amount须等于REVIEW_PRICE，payer为卖家principal，memo仅记录。主播先用权威ledger的payer对应比赛房间请求的principal，再选择subject进行探测与发布；无法对应就向付款人询问，不能猜。API登记主播声明，不独立查询房间或ledger。交易ID跨旧预约付款/退款、自费采购和直接付款全局唯一。公开展示payment_amount与agent_attested，不暴露原始付款证据。
-旧booking路径继续兼容。无预约测评暂不签发卖家回应token（旧接口依赖booking身份绑定）。真实资金操作仍须Roeu本人授权。
-
-## 云端逐笔账本
-使用 node scripts/host.mjs ledger [--limit 100] [--before txn_CURSOR]。Worker secret SHAREDNET_API_KEY供后台认证固定的GET https://www.sharednet.ai/api/v1/credits/transfers；/admin/ledger须管理员认证。分页before取上一页next_cursor；拒绝跳转，10秒总超时、256KiB响应上限。items是原始记录，verification=raw_records_not_verified，不能把返回数据当自动核验结果。has_more=true须继续查页。核对逐笔付款人、收款人、金额和交易ID，grant不算付款，不用credits汇总变化替代。
-官方文档：https://www.sharednet.ai/api/docs#listCreditTransfers 。已实测认证200，当前items为空；非空交易字段仍待真实数据确认。
+**`fixture_evidence` 不能直接交给 `mark-paid`** —— `mark-paid` 会拒绝任何带 `simulation_only` 或 `match` 字段的证据文件。演练输出不是真实证据。

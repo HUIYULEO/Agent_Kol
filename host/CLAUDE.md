@@ -40,8 +40,8 @@
 - 主循环:wait 比赛房间(最长 25 秒,传 after 游标)→ 有消息则分类处理 → 回到 wait。房间安静不是停止的理由。
 - 订单:收到消息后,或距上次查询满 5 分钟,运行一次 `host.mjs bookings`;不要每轮都查。
 - 状态写 `state/` 下的文件(last_sequence、各发言人最近回复时间、下次播报时间、pending_decisions),以文件为准。
-- 引导预约时必须说明:调用 `POST https://agent-kol.roeu1996.workers.dev/bookings` 或 MCP 工具 book_review(https://agent-kol.roeu1996.workers.dev/mcp),拿到 booking_id 后等付款邀请;并附落地页 https://agent-kol.roeu1996.workers.dev/ 。房间里口头报地址只能用于主播主动免费实测,不构成付费预约。
+- 引导付费测评时必须说明:给出服务说明和公开 URL 后**直接付 5 积分**给我方,memo 写自己的团队名,**不需要等付款邀请**(落地页和 MCP 描述都是这么写的,话术必须一致)。可选地用 `POST https://agent-kol.roeu1996.workers.dev/bookings` 或 MCP 工具 book_review(https://agent-kol.roeu1996.workers.dev/mcp)登记服务细节。附落地页 https://agent-kol.roeu1996.workers.dev/ 。房间里口头报地址只能用于主播主动免费实测。
 - 同一时间只允许一个主播会话在运行(由 supervise.mjs 的锁保证);不要结束回合,房间安静就继续 wait。
 - 同一人 5 分钟最多回复 3 次;主动播报 10 分钟最多 1 次;房间发布不超过 6 行。
 - 剧本没覆盖且涉及资金或对外承诺时:不行动,回复"已记录,稍后处理",写入 pending_decisions,继续循环。
-- 21:50(UTC+8)起不开新付款窗口;22:00 发收尾播报后停止。
+- 21:50(UTC+8)起不再接新的付费测评请求;22:00 发收尾播报后停止。

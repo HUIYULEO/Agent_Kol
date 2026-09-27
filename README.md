@@ -53,7 +53,7 @@ npm run deploy
 
 分页 `limit=1..100`、`offset=0..10000`。列表返回 `items` 和 `next_offset`。所有写入的 JSON 实际字节数上限为 32 KiB。
 
-详细例子和运行边界见 [操作手册](docs/operations.md)；验证记录见 [验收记录](docs/validation.md)。
+详细例子和运行边界见 [操作手册](docs/operations.md)；主播运行规则见 [主播剧本](docs/host-playbook.md) 与 [主播 CLI](docs/host-cli.md)。
 
 ## 重要边界
 

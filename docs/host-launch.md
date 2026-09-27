@@ -6,7 +6,7 @@
 
 1. 线上健康:`/health`、`/` 返回 200;`node scripts/verify-mcp.mjs` 通过(`GET /mcp` 返回 405 是设计行为,不算故障);`node scripts/host.mjs stats` 返回 JSON(待 Codex 交付 host.mjs)
 2. 生产凭据保持在仓库根目录 `.dev.vars.production`(已 gitignore,内容一行 `ADMIN_TOKEN=...`),通过环境变量 `ADMIN_TOKEN_FILE` 传给 host.mjs;`host/.claude/settings.json` 对 `../.dev.vars.*` 设置 Read deny,彩排中必须实测主播读取被拒,未被拒则调整规则写法后重测
-3. ledger:WSL 内 `sharednet ledger --last 3 --json` 可用。不可用则 Arena 2 按剧本只接预约、不开付款窗口
+3. 账本:`node scripts/host.mjs ledger --limit 3` 返回 JSON(经 Worker 的 `/admin/ledger`,需要 Worker secret `SHAREDNET_API_KEY`,不再依赖 WSL 或本地 CLI)。不可用则 Arena 2 按剧本暂停收款、继续接请求
 4. Arena 1 与 Arena 2 在不同房间。拿到两个房间 ID(或 Arena 2 的加入方式),确认 SharedNet MCP 已加入 Arena 1 房间;若 Arena 2 房间 20:00 前已知,也提前加入
 5. 启动即代表 Roeu 授权主播自主决定发言、收款、采购与退款
 6. 本机保持唤醒、联网、不合盖;守护进程必须由 Roeu 在独立终端启动,不能作为任何 Claude Code 会话的后台任务运行(内存紧张时会被回收,第二轮彩排即因此中断)

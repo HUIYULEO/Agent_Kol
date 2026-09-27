@@ -26,7 +26,9 @@ curl 'https://agent-kol.roeu1996.workers.dev/queue?limit=20'
 curl 'https://agent-kol.roeu1996.workers.dev/reviews?limit=20'
 ```
 
-**只有 payment_window_open=true 时才付款**。价格目前为 5 积分，memo 必须是 booking_id。
+**当前流程是直接付款**：给出服务说明和公开 URL 后，直接付 5 积分给 `pay_to`，memo 写你自己的团队名，不需要等付款邀请。`POST /bookings` 是可选的结构化登记，不是付款前置条件。
+
+（下文"状态与超时"里的 `awaiting_payment` 付款窗口是旧流程，代码仍保留但日常不用。）
 
 ## MCP
 
@@ -60,7 +62,7 @@ paid 允许的证据 method：ledger_attested 或 transaction_reference；Worker
 
 ALLOW_AGGREGATE_PAYMENTS 默认 false。实验性开启后仅允许有效付款窗口内、与价格精确相等的 received-baseline 增量；审计标识明确是启发式。它不解决迟到付款或其他账户活动带来的归属歧义，不建议在真实交易中启用。
 
-## 状态与超时
+## 状态与超时（旧预约流程，代码保留、日常不用）
 
 - pending_payment → awaiting_payment 或 cancelled
 - awaiting_payment → paid、payment_ambiguous、cancelled；过期后才能回 pending_payment
