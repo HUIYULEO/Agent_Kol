@@ -5,7 +5,7 @@ class HostError extends Error {constructor(code,status=0,details={}){super(code)
 function parse(args){
  const [command,...rest]=args,positionals=[],options={};
  const flags=new Set(['confirm-public','confirm-safe','accept-mcp']);
- const values=new Set(['status','reason','evidence-file','url','source-kind','source-ref','subject','post-body-file','file']);
+ const values=new Set(['limit','before','status','reason','evidence-file','url','source-kind','source-ref','subject','post-body-file','file']);
  for(let i=0;i<rest.length;i++){const item=rest[i];if(!item.startsWith('--')){positionals.push(item);continue;}
  const key=item.slice(2);if(key in options||(!flags.has(key)&&!values.has(key)))throw new HostError('invalid_arguments');
  if(flags.has(key))options[key]=true;else{const v=rest[++i];if(!v||v.startsWith('--'))throw new HostError('invalid_arguments');options[key]=v;}}
@@ -14,7 +14,7 @@ function parse(args){
 export async function runHost(args,{token,base=production,send=fetch,load=readFile}={}){
  try{
  const {command:c,positionals:p,options:o}=parse(args);
- const contracts={bookings:[0,['status']],booking:[1,[]],'open-window':[1,[]],'mark-paid':[1,['evidence-file']],'set-status':[2,['reason']],
+ const contracts={ledger:[0,['limit','before']],bookings:[0,['status']],booking:[1,[]],'open-window':[1,[]],'mark-paid':[1,['evidence-file']],'set-status':[2,['reason']],
  'approve-target':[0,['url','source-kind','source-ref','confirm-public','confirm-safe']],'revoke-target':[0,['url','reason']],probe:[0,['subject','url','post-body-file','accept-mcp']],publish:[0,['file']],stats:[0,[]]};
  if(!contracts[c]||p.length!==contracts[c][0]||Object.keys(o).some(k=>!contracts[c][1].includes(k)))throw new HostError('invalid_arguments');
  const u=new URL(base);
@@ -31,7 +31,12 @@ export async function runHost(args,{token,base=production,send=fetch,load=readFi
  const file=async name=>{if(!name)throw new HostError('file_required');try{const raw=await load(name,'utf8');if(Buffer.byteLength(raw)>32768)throw Error();const data=JSON.parse(raw);if(!data||typeof data!=='object'||Array.isArray(data))throw Error();return data;}catch{throw new HostError('invalid_input_file');}};
  const required=(name)=>{if(!o[name])throw new HostError('missing_'+name.replaceAll('-','_'));return o[name];};
  let data;
- if(c==='bookings')data=await call('/admin/bookings'+(o.status?'?status='+encodeURIComponent(o.status):''));
+ if(c==='ledger'){
+ const limit=Number(o.limit??100);
+ if(!Number.isInteger(limit)||limit<1||limit>100||o.before&&!/^txn_[A-Za-z0-9_-]{1,200}$/.test(o.before))throw new HostError('invalid_arguments');
+ data=await call('/admin/ledger?limit='+limit+(o.before?'&before='+encodeURIComponent(o.before):''));
+ }
+ else if(c==='bookings')data=await call('/admin/bookings'+(o.status?'?status='+encodeURIComponent(o.status):''));
  else if(c==='stats')data=await call('/reviews/stats');
  else if(['booking','open-window','mark-paid','set-status'].includes(c)){
  const id=p[0];if(!/^bk_[a-f0-9-]{36}$/.test(id))throw new HostError('invalid_booking_id');
@@ -57,7 +62,7 @@ export async function runHost(args,{token,base=production,send=fetch,load=readFi
  }catch(e){return {ok:false,status:e instanceof HostError?e.status:0,error:{code:e instanceof HostError?e.code:'local_error'},...(e instanceof HostError?e.details:{})};}
 }
 export async function main(args,env=process.env){
- if(!args.length||args.length===1&&['help','--help','-h'].includes(args[0]))return {"ok":true,"usage":["bookings [--status S]","booking ID","open-window ID","mark-paid ID --evidence-file FILE","set-status ID STATUS [--reason TEXT]","approve-target --url URL --source-kind booking|room_message --source-ref ID --confirm-public --confirm-safe","revoke-target --url URL --reason TEXT","probe --subject ID --url URL [--post-body-file FILE] [--accept-mcp]","publish --file FILE","stats"],"credentials":"ADMIN_TOKEN_FILE only; never put tokens in arguments."};
+ if(!args.length||args.length===1&&['help','--help','-h'].includes(args[0]))return {"ok":true,"usage":["ledger [--limit N] [--before txn_CURSOR]","bookings [--status S]","booking ID","open-window ID","mark-paid ID --evidence-file FILE","set-status ID STATUS [--reason TEXT]","approve-target --url URL --source-kind booking|room_message --source-ref ID --confirm-public --confirm-safe","revoke-target --url URL --reason TEXT","probe --subject ID --url URL [--post-body-file FILE] [--accept-mcp]","publish --file FILE","stats"],"credentials":"ADMIN_TOKEN_FILE only; never put tokens in arguments."};
  try{
  if(!env.ADMIN_TOKEN_FILE)return {ok:false,status:0,error:{code:'admin_token_file_required'}};
  const raw=await readFile(env.ADMIN_TOKEN_FILE,'utf8');

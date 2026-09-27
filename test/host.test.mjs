@@ -65,17 +65,15 @@ test('host help works without credentials and live ledger hands raw records to t
  assert.equal(live.fixture_evidence,undefined);
  assert.equal(matchLive(undefined,{items:[record],next_cursor:null,has_more:false}).expect.payee,null);
 });
-test('purchase planning enforces authorization, per-service/total limits, reserves and uncertain results',async()=>{
- const {purchasePlan,main:purchaseMain}=await import('../scripts/purchase.mjs');
- const f={authorization:{purchases_enabled:true,budget:90,expires_at:'2099-01-01T00:00:00Z'},request:{subject_id:'fixture',url:'https://public.example/data',amount:5,payee:'p_0123456789'},target:{url:'https://public.example/data',state:'active'},balance:100,unsettled_orders:2,events:[]};
- assert.equal(purchasePlan(f).ok,true);
- assert.equal(purchasePlan({...f,authorization:{...f.authorization,purchases_enabled:false}}).error.code,'purchase_not_authorized');
- assert.equal(purchasePlan({...f,request:{...f.request,amount:16}}).error.code,'single_purchase_limit');
- assert.equal(purchasePlan({...f,authorization:{...f.authorization,budget:4}}).error.code,'total_budget_limit');
- assert.equal(purchasePlan({...f,balance:24}).error.code,'reserve_violation');
- const e={operation_id:'a',state:'completed',amount:15,url:f.request.url,transaction_id:'txn_a'};
- assert.equal(purchasePlan({...f,events:[e]}).error.code,'service_purchase_limit');
- assert.equal(purchasePlan({...f,events:[{...e,state:'unknown'}]}).error.code,'unresolved_transfer');
- assert.equal(purchasePlan({...f,events:[e,{...e,operation_id:'b'}]}).error.code,'duplicate_transaction');
- assert.equal((await purchaseMain(['--execute'])).error.code,'live_transactions_disabled');
+
+
+test('live ledger routes through the admin CLI without local WSL execution',async()=>{
+ const {readLiveLedger}=await import('../scripts/ledger-match.mjs');let seen;
+ const page={items:[],has_more:false,next_cursor:null};
+ assert.deepEqual(await readLiveLedger(3,async args=>{seen=args;return {ok:true,data:page};}),page);
+ assert.deepEqual(seen,['ledger','--limit','3']);
+ await assert.rejects(readLiveLedger(101));
+ const calls=[];
+ const result=await runHost(['ledger','--limit','2','--before','txn_next'],{token,send:async(url,o)=>{calls.push({url,method:o.method});return Response.json(page);}});
+ assert.equal(result.ok,true);assert.equal(calls[0].method,'GET');assert.match(calls[0].url,/admin\/ledger\?limit=2&before=txn_next/);
 });

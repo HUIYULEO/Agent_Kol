@@ -39,9 +39,9 @@ host.mjs 无参数、help、--help、-h 均可在不读取管理员令牌的情�
 
 host_purchased 发布通路已支持 purchase_evidence：transaction_id、payer、payee、amount、memo、observed_at。payer 必须为配置的主播 principal，payee 为另一个 principal，amount为正整数，memo只记录原文、不限制内容。公开仅展示 purchase_amount 与 agent_attested，不公开原始采购账本字段。交易 ID 与 seller_paid 的付款/退款共用唯一引用表；同一 subject 的同内容重试幂等。此接口登记主播的查账声明，不会发起付款，也不等于 Worker 独立查账。
 
-ledger-match.mjs --live --booking-file FILE [--last N] 通过固定 sharednet@0.1.8 只读读取 ledger。Windows 使用 Ubuntu-20.04 和已安装 Node22.23.3 的绝对路径；迁移机器时应调整该运行时路径。已实测登录可用、空账本返回 none。官方 API 文档与 /api/v1/openapi.json 目前仅列出 CreditTransfer 名称，未定义字段；非空记录保守返回 unparseable，不猜字段或标为已核验。待后续真实积分测试确认字段后补映射。
+ledger-match.mjs --live --booking-file FILE [--last N] 现在通过 host.mjs 调用云端 /admin/ledger，不再依赖WSL或本地SharedNet CLI。
 
-purchase.mjs --dry-run --fixture-file scenario.json 仅验证采购计划，无实际付款通道。夹具包含 authorization{purchases_enabled,budget,expires_at}、request{subject_id,url,amount,payee?}、target{url,state,seller_principal?}、balance、unsettled_orders、events。这是历史策略夹具，已退出 Arena 主播流程，其旧限制不代表当前比赛策略。旧夹具上限：单笔/同URL累计15、总预算最多90、保留10+未结订单数×5；未知/pending结果、重复交易拒绝。events为每个operation当前状态的测试输入，不是已实现的持久支出账本。按房间 #87 的最小实现，不再为此脚本开发实际pay；主播在 Roeu 本人授权后直接调用 SharedNet MCP pay，memo=Roeu，总预算100且无每服务上限、无保留金；不宣称该dry-run已经可用于无人值守转账。自动退款不在当前MVP。
+旧采购规划脚本及专属测试已按房间 #102 删除，不再作为比赛运行入口。
 
 测评优先发现亮点，尽量给有依据的推荐；不编造、不隐瞒关键失败，付费不直接决定结论。
 
@@ -49,3 +49,7 @@ purchase.mjs --dry-run --fixture-file scenario.json 仅验证采购计划，无�
 ## 无预约付费测评（房间 #92）
 POST /admin/reviews 支持 funding_source=seller_paid、不带 booking_id，带独立 subject_id、probe_ids、正文及 payment_evidence{transaction_id,payer,payee,amount,memo,observed_at}。payee须为PAY_TO，amount须等于REVIEW_PRICE，payer为卖家principal，memo仅记录。主播先用权威ledger的payer对应比赛房间请求的principal，再选择subject进行探测与发布；无法对应就向付款人询问，不能猜。API登记主播声明，不独立查询房间或ledger。交易ID跨旧预约付款/退款、自费采购和直接付款全局唯一。公开展示payment_amount与agent_attested，不暴露原始付款证据。
 旧booking路径继续兼容。无预约测评暂不签发卖家回应token（旧接口依赖booking身份绑定）。真实资金操作仍须Roeu本人授权。
+
+## 云端逐笔账本
+使用 node scripts/host.mjs ledger [--limit 100] [--before txn_CURSOR]。Worker secret SHAREDNET_API_KEY供后台认证固定的GET https://www.sharednet.ai/api/v1/credits/transfers；/admin/ledger须管理员认证。分页before取上一页next_cursor；拒绝跳转，10秒总超时、256KiB响应上限。items是原始记录，verification=raw_records_not_verified，不能把返回数据当自动核验结果。has_more=true须继续查页。核对逐笔付款人、收款人、金额和交易ID，grant不算付款，不用credits汇总变化替代。
+官方文档：https://www.sharednet.ai/api/docs#listCreditTransfers 。已实测认证200，当前items为空；非空交易字段仍待真实数据确认。

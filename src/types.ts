@@ -1,5 +1,5 @@
 export interface Env {
- PROBE_ALLOWED_URLS?:string; DB:D1Database; REVIEW_PRICE:string; PAY_TO:string; ADMIN_TOKEN?:string;
+ PROBE_ALLOWED_URLS?:string; DB:D1Database; REVIEW_PRICE:string; PAY_TO:string; ADMIN_TOKEN?:string; SHAREDNET_API_KEY?:string;
  PAYMENT_WINDOW_SECONDS?:string; ALLOW_AGGREGATE_PAYMENTS?:string;
  MAX_OPEN_BOOKINGS_PER_PAYEE?:string; MAX_OPEN_BOOKINGS?:string;
 }

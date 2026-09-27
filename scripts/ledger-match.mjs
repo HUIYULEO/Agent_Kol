@@ -1,5 +1,4 @@
-import {execFile} from 'node:child_process';
-import {promisify} from 'node:util';
+import {main as hostMain} from './host.mjs';
 import {readFile} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
 // Canonical FIXTURE format, deliberately not an adapter for an unverified live ledger.
@@ -25,17 +24,15 @@ export function matchFixture(booking,rows){
 export function matchLive(booking,payload){
  if(!payload||!Array.isArray(payload.items)||typeof payload.has_more!=='boolean'||!(payload.next_cursor===null||typeof payload.next_cursor==='string'))return {match:'unparseable'};
  if(!payload.items.length)return payload.has_more?{match:'unparseable',reason:'incomplete_page'}:{match:'none'};
- return {match:'read_records',records:payload.items,has_more:payload.has_more,
+ return {match:'read_records',records:payload.items,has_more:payload.has_more,next_cursor:payload.next_cursor,
   expect:{payee:booking?.pay_to??null,amount:booking?.price??null},
-  note:'Field names are undocumented, so read each record yourself. Mark paid only when exactly one record shows our principal as the recipient for the expected amount, then write that record into an evidence file for host.mjs mark-paid. If no record or more than one fits, do not mark paid.'};
+  note:'Field names are undocumented, so read each record yourself. These records are not verified evidence. Follow next_cursor using host.mjs ledger --before until relevant pages are read. Match recipient, amount, payer principal and the room request; do not infer missing fields or use balance deltas. Direct reviews use subject_id and payment_evidence; mark-paid is only for legacy bookings.'};
 }
-export async function readLiveLedger(last=100,run=promisify(execFile)){
+export async function readLiveLedger(last=100,run=hostMain){
  if(!Number.isSafeInteger(last)||last<1||last>100)throw Error('invalid_limit');
- const args=['ledger','--last',String(last)];
- const result=process.platform==='win32'
- ?await run('wsl.exe',['-d','Ubuntu-20.04','--exec','env','PATH=/home/luhy/.local/share/agent-kol-node/node-v22.23.3-linux-x64/bin:/usr/bin:/bin','npx','-y','sharednet@0.1.8',...args],{timeout:45000,maxBuffer:262144,windowsHide:true})
- :await run('npx',['-y','sharednet@0.1.8',...args],{timeout:45000,maxBuffer:262144});
- return JSON.parse(result.stdout);
+ const result=await run(['ledger','--limit',String(last)]);
+ if(!result.ok)throw Error('ledger_read_failed');
+ return result.data;
 }
 export async function main(args){
  if(args[0]==='--live'&&args[1]==='--booking-file'&&args[2]&&(args.length===3||args.length===5&&args[3]==='--last')){

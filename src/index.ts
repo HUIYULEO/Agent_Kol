@@ -1,3 +1,4 @@
+import {readLedger} from './ledger';
 import {issueResponseToken,submitResponse} from './seller-response';
 import {approveTarget,revokeTarget,runProbe} from './probe';
 import { diagnostic, routeLabel } from './diagnostics';
@@ -31,6 +32,7 @@ async function route(request:Request,env:Env):Promise<Response> {
  if(response&&method==='POST')return json(await submitResponse(env,response[1],request,await readJson(request)));
  if(path.startsWith('/admin/')){
   await authenticate(request,env);
+  if(method==='GET'&&path==='/admin/ledger')return json(await readLedger(env,url));
   const responseToken=/^\/admin\/reviews\/(rev_[a-f0-9-]+)\/response-token$/.exec(path);
   if(responseToken&&method==='POST')return json(await issueResponseToken(env,responseToken[1]),201);
   if(method==='POST'&&path==='/admin/probe-targets/revoke')return json(await revokeTarget(env,await readJson(request)));

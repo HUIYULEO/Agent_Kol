@@ -76,5 +76,5 @@
 - typecheck、35项测试全部通过。新增host_purchased缺证据400、非法付款方/超额拒绝、原始采购证据不公开、幂等重试及付款/采购共享交易ID防重用；CLI帮助、采购dry-run拒绝场景通过。
 - 0008远端迁移完成；Worker 97ac20e5-c22e-4d00-8cde-9a3831792f97。线上只读admin=401/200/reviews200、MCP初始化/四工具发现/list_reviews通过。
 - WSL真实只读ledger已成功，0条记录，match=none。非空交易字段映射仍未核实，返回unparseable。真实采购、付款、退款均未执行。
-- purchase.mjs仅fixture dry-run预算规划，不具备生产转账执行、持久锁/追加支出日志；启用前仍需实现和核验，不能用于无人值守花费。
+- 已按房间#102删除旧purchase.mjs离线规划及其专属测试。
 - 第二轮彩排未由本轮重跑或验收；supervise的原子锁/截止终止问题已反馈产品负责人。

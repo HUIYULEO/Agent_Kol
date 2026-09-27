@@ -7,7 +7,7 @@ export function diagnostic(error:unknown,event:string,route:string,requestId:str
  return {event,request_id:requestId,route,error_type:errorType,category,frames};
 }
 export function routeLabel(path:string) {
- if(['/','/health','/bookings','/queue','/reviews','/mcp','/admin/bookings','/admin/reviews','/admin/probe','/admin/probe-targets','/reviews/stats'].includes(path))return path;
+ if(['/','/health','/bookings','/queue','/reviews','/mcp','/admin/bookings','/admin/ledger','/admin/reviews','/admin/probe','/admin/probe-targets','/reviews/stats'].includes(path))return path;
  if(/^\/bookings\/bk_[a-f0-9-]+$/.test(path))return '/bookings/:id';
  if(/^\/reviews\/rev_[a-f0-9-]+$/.test(path))return '/reviews/:id';
  if(/^\/admin\/bookings\/bk_[a-f0-9-]+\/status$/.test(path))return '/admin/bookings/:id/status';
