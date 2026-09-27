@@ -7,7 +7,7 @@
   "compatibility_flags": ["global_fetch_strictly_public"],
   "workers_dev": true, "observability": { "enabled": true, "logs": { "enabled": true, "invocation_logs": false } }, "triggers": { "crons": ["* * * * *"] },
   "vars": {
-    "PROBE_ALLOWED_URLS": "https://jsonplaceholder.typicode.com/todos/1,https://jsonplaceholder.typicode.com/posts/1", "REVIEW_PRICE": "5", "PAYMENT_WINDOW_SECONDS": "180", "ALLOW_AGGREGATE_PAYMENTS": "false",
+    "PROBE_ALLOWED_URLS": "https://jsonplaceholder.typicode.com/todos/1,https://jsonplaceholder.typicode.com/posts/1", "REVIEW_PRICE": "10", "PAYMENT_WINDOW_SECONDS": "180", "ALLOW_AGGREGATE_PAYMENTS": "false",
     "MAX_OPEN_BOOKINGS_PER_PAYEE": "2", "MAX_OPEN_BOOKINGS": "30",
     "PAY_TO": "p_umBqZvkim8"
   },
